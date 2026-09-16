@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BINARY="${1:-.build/release/open-wispr}"
-APP_DIR="${2:-OpenWispr.app}"
+APP_DIR="${2:-Dictation-WIP.app}"
 VERSION="${3:-0.3.0}"
 
 rm -rf "$APP_DIR"
@@ -23,11 +23,11 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <key>CFBundleExecutable</key>
     <string>open-wispr</string>
     <key>CFBundleIdentifier</key>
-    <string>com.human37.open-wispr</string>
+    <string>com.goprimy.dictation-wip</string>
     <key>CFBundleName</key>
-    <string>OpenWispr</string>
+    <string>Dictation-WIP</string>
     <key>CFBundleDisplayName</key>
-    <string>OpenWispr</string>
+    <string>Dictation (Working Title)</string>
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
@@ -41,11 +41,11 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>OpenWispr needs microphone access to record speech for transcription.</string>
+    <string>Dictation needs microphone access to record speech for transcription.</string>
 </dict>
 </plist>
 PLIST
 
-codesign --force --sign - --identifier com.human37.open-wispr "$APP_DIR"
+codesign --force --sign - --identifier com.goprimy.dictation-wip "$APP_DIR"
 
 echo "Built $APP_DIR"

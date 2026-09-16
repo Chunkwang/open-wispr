@@ -111,7 +111,11 @@ public class Transcriber {
     }
 
     public static func findWhisperBinary() -> String? {
-        let candidates = [
+        var candidates: [String] = []
+        if let bundled = Bundle.main.url(forResource: "whisper-cli", withExtension: nil, subdirectory: "whisper") {
+            candidates.append(bundled.path)
+        }
+        candidates += [
             "/opt/homebrew/bin/whisper-cli",
             "/usr/local/bin/whisper-cli",
             "/opt/homebrew/bin/whisper-cpp",
@@ -152,7 +156,11 @@ public class Transcriber {
     static func findModel(modelSize: String) -> String? {
         let modelFileName = "ggml-\(modelSize).bin"
 
-        let candidates = [
+        var candidates: [String] = []
+        if let bundled = Bundle.main.url(forResource: modelFileName, withExtension: nil, subdirectory: "models") {
+            candidates.append(bundled.path)
+        }
+        candidates += [
             "\(Config.configDir.path)/models/\(modelFileName)",
             "/opt/homebrew/share/whisper-cpp/models/\(modelFileName)",
             "/usr/local/share/whisper-cpp/models/\(modelFileName)",

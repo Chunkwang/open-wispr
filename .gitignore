@@ -9,3 +9,6 @@
 .vscode/
 docs/superpowers/
 .worktrees/
+
+# Ignore Node.js dependencies
+node_modules/

@@ -36,6 +36,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupInner() throws {
+        let isFirstRun = !FileManager.default.fileExists(atPath: Config.configFile.path)
         config = Config.load()
         inserter = TextInserter()
         migrateAudioDeviceUIDIfNeeded()
@@ -61,6 +62,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         if Transcriber.findWhisperBinary() == nil {
             print("Error: whisper-cpp not found. Install it with: brew install whisper-cpp")
             return
+        }
+
+        if isFirstRun {
+            let semaphore = DispatchSemaphore(value: 0)
+            OnboardingWindowController.presentIfFirstRun {
+                semaphore.signal()
+            }
+            semaphore.wait()
         }
 
         if Permissions.didUpgrade() {
