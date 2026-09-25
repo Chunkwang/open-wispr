@@ -50,6 +50,33 @@ jobs:
             exit 1
           fi
 
+  # Proxy tests run in real workerd (via @cloudflare/vitest-pool-workers) against
+  # mocked Supabase and Anthropic; no accounts or keys are involved.
+  backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: backend/proxy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/proxy/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
   unit-tests:
     runs-on: macos-15
     steps:

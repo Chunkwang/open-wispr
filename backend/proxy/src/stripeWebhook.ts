@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import type { Env } from "./types";
+import { supabaseBaseUrl } from "./supabaseUrl";
 
 /**
  * Requires the Checkout Session (or the subscription itself) to carry
@@ -46,7 +47,7 @@ export async function handleStripeWebhook(request: Request, env: Env): Promise<R
 }
 
 async function setUserTier(userId: string, tier: "free" | "pro", env: Env): Promise<void> {
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`, {
+  const res = await fetch(`${supabaseBaseUrl(env.SUPABASE_URL)}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`, {
     method: "PATCH",
     headers: {
       apikey: env.SUPABASE_SERVICE_ROLE_KEY,

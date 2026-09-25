@@ -1,5 +1,8 @@
+import type { QuotaCounter } from "./quotaCounter";
+
 export interface Env {
-  RATE_LIMIT_KV: KVNamespace;
+  /** Per-user quota counters (Durable Object, one instance per user id). */
+  QUOTA: DurableObjectNamespace<QuotaCounter>;
   SUPABASE_URL: string;
   SUPABASE_JWT_SECRET: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
@@ -20,3 +23,11 @@ export const TIER_LIMITS: Record<Tier, { perMinute: number; perMonth: number }> 
   free: { perMinute: 0, perMonth: 0 },
   pro: { perMinute: 5, perMonth: 3000 },
 };
+
+/**
+ * Server-side input caps, enforced before any quota or provider work. Both apply:
+ * the transcript is capped in Unicode code points (so an emoji counts once), and
+ * the whole request body is capped in bytes.
+ */
+export const MAX_TRANSCRIPT_CHARS = 16_000;
+export const MAX_BODY_BYTES = 64 * 1024;

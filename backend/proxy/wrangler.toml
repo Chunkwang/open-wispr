@@ -3,11 +3,15 @@ main = "src/index.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Create with: wrangler kv namespace create RATE_LIMIT_KV
-# then paste the returned id below.
-kv_namespaces = [
-  { binding = "RATE_LIMIT_KV", id = "REPLACE_WITH_KV_NAMESPACE_ID" }
-]
+# Per-user quota counters. One QuotaCounter Durable Object per user id; it stores
+# usage counts only (SQLite-backed). The migration creates the class on first deploy.
+[[durable_objects.bindings]]
+name = "QUOTA"
+class_name = "QuotaCounter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["QuotaCounter"]
 
 [vars]
 SUPABASE_URL = "REPLACE_WITH_SUPABASE_PROJECT_URL"

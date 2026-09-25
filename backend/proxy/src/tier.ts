@@ -1,4 +1,5 @@
 import type { Env, Tier } from "./types";
+import { supabaseBaseUrl } from "./supabaseUrl";
 
 /**
  * The tier could not be determined (Supabase down, non-OK response, dropped
@@ -17,8 +18,15 @@ export class TierLookupError extends Error {
  * A 200 with no row, or a tier other than "pro", is "free". Any failure to get
  * an answer throws TierLookupError.
  */
+/** A hung Supabase must become a 503, not a hung request. */
+export const TIER_LOOKUP_TIMEOUT_MS = 3000;
+
+export function tierLookupUrl(userId: string, env: Pick<Env, "SUPABASE_URL">): string {
+  return `${supabaseBaseUrl(env.SUPABASE_URL)}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=tier`;
+}
+
 export async function getUserTier(userId: string, env: Env): Promise<Tier> {
-  const url = `${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=tier`;
+  const url = tierLookupUrl(userId, env);
   let rows: unknown;
   try {
     const res = await fetch(url, {
@@ -26,6 +34,7 @@ export async function getUserTier(userId: string, env: Env): Promise<Tier> {
         apikey: env.SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
       },
+      signal: AbortSignal.timeout(TIER_LOOKUP_TIMEOUT_MS),
     });
     if (!res.ok) throw new TierLookupError();
     rows = await res.json();

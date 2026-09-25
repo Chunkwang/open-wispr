@@ -3,6 +3,9 @@
 // proxy under `wrangler dev`. Dev only: the secret is whatever you put in
 // .dev.vars, never a real project's secret.
 //
+// The token's issuer is `${SUPABASE_URL}/auth/v1`, with SUPABASE_URL taken from the
+// env var, else .dev.vars, else http://127.0.0.1:54321 (the mock Supabase).
+//
 // Usage:
 //   node scripts/mint-dev-token.mjs [user-id] [--ttl <seconds>]
 //   curl -H "Authorization: Bearer $(node scripts/mint-dev-token.mjs)" ...
@@ -16,6 +19,7 @@ import { SignJWT } from "jose";
 
 const DEFAULT_USER_ID = "00000000-0000-4000-8000-000000000001";
 const DEFAULT_TTL_SECONDS = 3600;
+const DEFAULT_SUPABASE_URL = "http://127.0.0.1:54321";
 
 function fail(message) {
   process.stderr.write(`mint-dev-token: ${message}\n`);
@@ -62,6 +66,10 @@ function readDevVar(name) {
 }
 
 const { userId, ttl } = parseArgs(process.argv.slice(2));
+// The Worker only accepts UUID subjects (as Supabase issues), so refuse anything else here.
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+  fail(`user id must be a UUID (the Worker rejects any other subject), got "${userId}"`);
+}
 const secret = process.env.SUPABASE_JWT_SECRET || readDevVar("SUPABASE_JWT_SECRET");
 if (!secret) {
   fail(
@@ -80,8 +88,13 @@ if (!secret.startsWith("local-dev-")) {
   );
 }
 
+// The Worker requires iss === `${SUPABASE_URL}/auth/v1` and aud === "authenticated".
+// Derive the issuer from the same SUPABASE_URL the Worker will run with.
+const supabaseUrl = (process.env.SUPABASE_URL || readDevVar("SUPABASE_URL") || DEFAULT_SUPABASE_URL).replace(/\/+$/, "");
+
 const token = await new SignJWT({ aud: "authenticated", role: "authenticated" })
   .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+  .setIssuer(`${supabaseUrl}/auth/v1`)
   .setSubject(userId)
   .setIssuedAt()
   .setExpirationTime(`${ttl}s`)

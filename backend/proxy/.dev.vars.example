@@ -1,16 +1,21 @@
 # Copy to .dev.vars (gitignored) for `wrangler dev`. Placeholder values only;
-# never put real keys in this file. RATE_LIMIT_KV is a binding, not a variable:
-# wrangler dev provides a local KV for it automatically.
+# never put real keys in this file. QUOTA (the per-user quota Durable Object) is a binding,
+# not a variable: wrangler dev provides it locally, with state in .wrangler/.
 
-# Local mock Supabase (npm run dev:mock). Overrides [vars] in wrangler.toml.
+# Local mock Supabase (npm run dev:mock). Overrides [vars] in wrangler.toml. Tokens must carry
+# iss = <this URL>/auth/v1 (npm run dev:token does that from this value).
 SUPABASE_URL=http://127.0.0.1:54321
 # Must start with "local-dev-" (mint-dev-token.mjs refuses anything else). Never use a real project secret.
+# This exact value is published in the repo, so the Worker refuses it (500 misconfigured) on any
+# non-loopback hostname (as it does any local-dev- value or secret under 32 characters), and a test
+# keeps src/hostGuard.ts in step with it. Don't change one without the other.
 SUPABASE_JWT_SECRET=local-dev-jwt-secret-change-me-32-chars-min
 # Used by the Worker for profile lookups; a dummy value works against the mock.
 SUPABASE_SERVICE_ROLE_KEY=local-dev-service-role-key
 # Leave as a placeholder. Real provider keys are set as Wrangler secrets, never in this file.
 ANTHROPIC_API_KEY=sk-ant-placeholder
-# Dummy Stripe values; the mock Stripe server arrives later.
+# The three placeholder values (this service-role key, whsec_placeholder, sk_test_placeholder) are refused
+# on the webhook route off loopback. Dummy Stripe values; the mock Stripe server arrives later.
 STRIPE_SECRET_KEY=sk_test_placeholder
 STRIPE_WEBHOOK_SECRET=whsec_placeholder
 

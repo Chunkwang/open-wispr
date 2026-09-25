@@ -1,8 +1,7 @@
 import type { Env } from "./types";
+import { isLoopbackHostname } from "./hostGuard";
 
 export type LlmProvider = "claude" | "mock";
-
-const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost"]);
 
 /**
  * Picks the rewrite provider. The mock is selected only when BOTH the dev-only
@@ -11,7 +10,7 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost"]);
  * fails closed to the real provider. Pure on purpose, so it is easy to test.
  */
 export function chooseProvider(env: Pick<Env, "LLM_PROVIDER">, hostname: string): LlmProvider {
-  if (env.LLM_PROVIDER === "mock" && LOOPBACK_HOSTNAMES.has(hostname)) return "mock";
+  if (env.LLM_PROVIDER === "mock" && isLoopbackHostname(hostname)) return "mock";
   return "claude";
 }
 
