@@ -98,7 +98,7 @@ A free, local-first, open-source-forked voice dictation core — hold a key, spe
 
 ## 9. Platform & Distribution
 
-**v1: macOS only**, Sonoma 14.2+, Apple Silicon — matches open-wispr's base.
+**v1: macOS only**, macOS 13 (Ventura) or later, Apple Silicon — matches open-wispr's base. (Revised from Sonoma 14.2+ by the founder on 2026-09-24: nothing in v1 needs 14.2, and lowering a floor is free while raising one later strands users. The v2 agent's screenshot API needs macOS 14, so v2 must disable itself on macOS 13.)
 
 **Distribution cost:** Apple Developer Program notarization — **$99/year**, non-optional given how central trust is to the pitch.
 

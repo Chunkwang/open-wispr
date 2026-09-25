@@ -12,6 +12,10 @@
 
 <p align="center">Powered by <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a> with Metal acceleration on Apple Silicon.</p>
 
+## Requirements
+
+macOS 13 (Ventura) or later on a Mac with Apple Silicon.
+
 ## Install
 
 ```bash
@@ -147,4 +151,4 @@ open-wispr is free and always will be. If you find it useful, you can [leave a t
 
 ## License
 
-MIT
+MIT (see [LICENSE](LICENSE)). Components the app uses, downloads or links (whisper.cpp, Whisper model weights, Sparkle) are listed with their licenses in [NOTICE](NOTICE).
