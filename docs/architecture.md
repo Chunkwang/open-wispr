@@ -29,23 +29,24 @@ Maps each component in `murmur-trd.md` to the file that implements it today, and
 
 | TRD component | Files | Status |
 |---|---|---|
-| Router + rewrite handler | `src/index.ts` (`POST /v1/rewrite`, `POST /v1/stripe/webhook`; JSON errors 400/401/402/429/502 and 503 `service_unavailable` when the tier or quota lookup fails) | Built, never deployed |
+| Router + rewrite handler | `src/index.ts` (`POST /v1/rewrite`, `POST /v1/stripe/webhook`; check order: host guard, auth, body (64 KB and 16,000-character caps, whitespace-only and bad UTF-8 rejected), tier, quota, provider; JSON errors 400/401/402/413/429/502, 503 `service_unavailable` when the tier or quota lookup fails or hangs, 500 `misconfigured`/`internal_error` with fixed bodies; one content-free log line per request) | Built, never deployed |
 | Mock LLM (dev only) | `src/llmProvider.ts`: `chooseProvider` returns the mock only when `LLM_PROVIDER=mock` **and** the request host is `127.0.0.1` or `localhost`; otherwise the real Claude path. `LLM_PROVIDER` is not in `wrangler.toml` (CI fails if it appears) | Built |
-| Auth (Supabase JWT, HS256 shared secret) | `src/auth.ts` | Built. Algorithm to be confirmed against the real project (Task 2.3) |
-| Tier lookup (Supabase `profiles`) | `src/tier.ts` (a failed lookup throws `TierLookupError`; it is never treated as Free) | Built. No migration or RLS in the repo yet (Task 2.2); no timeout on the Supabase call yet |
-| Server-side quota | `src/rateLimit.ts`, limits in `src/types.ts` | Built with KV. **Not atomic**; replace with a Durable Object (Task 2.6) |
-| Claude call + rewrite prompt | `src/claude.ts` | Built. Model and prompt not yet chosen by measurement (Tasks 2.8, 2.9) |
+| Auth (Supabase JWT, HS256 shared secret) | `src/auth.ts` (requires `exp`, a UUID `sub`, `aud=authenticated`, and `iss=${SUPABASE_URL}/auth/v1`), `src/supabaseUrl.ts` (one place that normalises the URL) | Built. Algorithm to be confirmed against the real project (Task 2.3) |
+| Deployment safety guard | `src/hostGuard.ts`: off a loopback host the Worker refuses example/weak secrets (`local-dev-*`, under 32 characters, the webhook placeholders) with a fixed `misconfigured` body | Built |
+| Tier lookup (Supabase `profiles`) | `src/tier.ts` (a failed lookup throws `TierLookupError`; it is never treated as Free; 3 s timeout) | Built. No migration or RLS in the repo yet (Task 2.2) |
+| Server-side quota | `src/quotaCounter.ts` (`QuotaCounter` Durable Object, one per user; one uninterruptible read-check-increment; stores counts only), `src/rateLimit.ts` (calls it with a 3 s deadline), limits in `src/types.ts` | Built and tested with a real Durable Object in local workerd: 20 parallel requests with a limit of 5 admit exactly 5. Not yet run on Cloudflare. Quota counts attempts (a 502 is not refunded) |
+| Claude call + rewrite prompt | `src/claude.ts` (90 s timeout, no automatic retries; only `end_turn`/`stop_sequence` with non-empty text count as success, anything else is a 502) | Built. Model and prompt not yet chosen by measurement (Tasks 2.8, 2.9) |
 | Stripe webhook → tier | `src/stripeWebhook.ts` | Built. Returns 200 even if the Supabase write fails (Task 4.3) |
 | Local dev token and mocks | `scripts/mint-dev-token.mjs` (`npm run dev:token`), `scripts/mock-supabase.mjs` (`npm run dev:mock`; `MOCK_TIER`, `MOCK_FAIL`). Steps for running everything without accounts: `docs/local-dev.md` and `backend/proxy/README.md` | Built |
 | Checkout / portal / `/v1/me` / referral / events | none | Not built (Stages 4, 7) |
-| Tests | none | Not built (Task 2.4) |
+| Tests | `test/*.test.ts` (vitest in real workerd via `@cloudflare/vitest-pool-workers`; 175 tests: contract, hardening, logging, quota); `npm test` | Built. Backend mutation-checked (about 50 deliberate breaks, all caught) |
 
 ## Build, packaging, release (`scripts/`, `.github/workflows/`, `Formula/`)
 
 | Concern | Files | Status |
 |---|---|---|
 | App bundle + Info.plist | `scripts/bundle-app.sh` (copies the binary only, ad-hoc signs, min OS 13.0) | Built; not release-grade (Stage 8) |
-| CI | `.github/workflows/ci.yml` (macOS 15: build, `swift test`, install smoke test, transcription test) | Built. No backend job yet |
+| CI | `.github/workflows/ci.yml` (macOS 15: build plus a check that a release binary cannot grant rewrite consent, `swift test`, install smoke test, transcription test; ubuntu: `backend` job with `npm ci`, typecheck, tests, and a guard that `LLM_PROVIDER` is not in `wrangler.toml`) | Built. The `backend` job has not run on GitHub yet (runs on pull requests to `main`) |
 | Site deploy | `.github/workflows/deploy.yml` (Cloudflare Pages: `index.html` etc.) | Built; site still describes open-wispr |
 | Homebrew distribution | `Formula/open-wispr.rb` (points at upstream `human37/open-wispr` v0.9.1) | Stale (Task 8.11) |
 

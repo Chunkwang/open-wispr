@@ -130,21 +130,21 @@ Menu item writes `rewriteMode`, with a status line showing why rewrite is or isn
 Check whether the project signs with HS256 or asymmetric keys. If asymmetric, switch `auth.ts` to a remote JWKS.
 *Done when:* a real Supabase-issued token is accepted and a tampered one is rejected.
 
-**2.4 Proxy test harness** · M
+**2.4 Proxy test harness** · M  **[DONE 2026-09-25]**
 Add vitest. Cover: missing/invalid token → 401, Free → 402, over-quota → 429, empty transcript → 400, Claude failure → 502, and a Supabase outage (today `getUserTier` lets the fetch failure escape as a 500 with a stack trace, and a non-OK response is treated as Free; a Pro user during an outage should get a 503, not a false upgrade prompt). **Done on Day 2** for a failed or dropped Supabase call and a failing quota call (JSON 503, no upstream details); still open: give the Supabase `fetch` a timeout so a *hung* upstream also becomes a 503 instead of hanging the request, and add automated tests for all of it.
 *Done when:* `npm test` passes and CI runs it (add a job to `ci.yml`).
 
-**2.5 Cap transcript length** · S
+**2.5 Cap transcript length** · S  **[DONE 2026-09-25]** (16,000 characters counted as code points, plus a 64 KB body cap; body validated before quota)
 (Also: cap `transcript.length` at ~16,000 chars with a 413, and fail the request when Claude's `stop_reason` is `max_tokens` (today a long dictation is silently truncated and the truncated text is inserted as if complete). And `handleRewrite` consumes quota *before* validating the body, so malformed requests burn a user's per-minute allowance; validate first. And URL-encode `userId` when building the Supabase REST URLs in `tier.ts` and `stripeWebhook.ts`.)
 Reject transcripts over a fixed limit (start at 8,000 chars) with 413.
 *Done when:* a test posts a 100,000-char body and gets 413 without any Claude call being made.
 
-**2.6 Make the quota atomic** · M
+**2.6 Make the quota atomic** · M  **[DONE 2026-09-25]** (Durable Object; 20 parallel requests admit exactly 5, proven in tests and in a real `wrangler dev` run)
 (Also return a machine-readable body such as `{"error":"rate_limited","scope":"minute|month"}`; the client can then tell the two apart without parsing free text.)
 Replace the KV counters with a Durable Object (per-user), keeping the per-minute and monthly caps. Store counts only, never content (TRD 3.3).
 *Done when:* a test fires 20 parallel requests against a limit of 5 and exactly 5 succeed.
 
-**2.7 Content-free request logging** · S
+**2.7 Content-free request logging** · S  **[DONE 2026-09-25]**
 Log status, latency and a hashed user ID. Add a test asserting no transcript text appears in logs.
 *Done when:* the test passes.
 

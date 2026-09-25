@@ -11,6 +11,7 @@
 - **Light days** are 7, 14, 21, 28 (Wednesdays): one build block, then review and catch-up. They exist so a slipped day doesn't cascade.
 - **No accounts until Day 16.** Per your call, we build against local stand-ins: a mock Supabase (auth, profiles), a mock Stripe (checkout, portal, signed webhooks), and a mock LLM provider in the proxy. The mock LLM is enabled only by a dev environment variable, never in the deployed Worker. Real accounts get wired in on Days 16–18.
 - **Defaults I've assumed for the open decisions** (tell me if any is wrong): product identity kept in one place, `ProductInfo.swift`, and currently "Dictation (WIP)" (a display-name-only switch to "Murmur" needs no migration; the bundle ID must not change after Day 4, when tokens start living in Keychain; D1 must be settled by Day 15); magic-link sign-in (D2); rewrite auto-on-release behind a config flag (D3); test-mode price $12 with a 7-day trial (D4); opt-in, off-by-default anonymous counters (D5); model bundled in the app (D6); referral = extended trial for both sides (D7).
+- **Decision (founder, 2026-09-25): Days 19–30 build option A, the Email + Calendar agent. Option B (voice-edit selected text, and read-only "ask about my screen") is built after A.** Note: real Email sending needs Google's OAuth verification, which takes weeks, so Email runs against a mock Google server during the build.
 - **v2 ships behind a flag, off by default, and isn't marketed** (Days 19–30). That's the PRD's Section 13 gate: v1 usage data decides whether it's ever switched on for users.
 
 ## Milestones

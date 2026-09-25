@@ -15,8 +15,12 @@ This runs the whole Day 2 path on one Mac: hold the key, speak, the transcript g
 The app is not self-contained yet (Tasks 8.2 and 8.3), so before dictation works at all you need:
 
 1. Homebrew `whisper-cpp` (`brew install whisper-cpp`), which provides `whisper-cli`.
-2. A downloaded Whisper model: `/tmp/murmur-build/debug/open-wispr download-model small.en` (after step 2's build) (or let the app download it on first start; that is a network download).
-3. Microphone and Accessibility permission for whatever launches the app (Terminal, if you run the binary from a shell). The first start prompts for both.
+2. A downloaded Whisper model: after step 2's build, run `.build/debug/open-wispr download-model base.en` (about 148 MB from Hugging Face; `base.en` is the default in `config.json`). The app would otherwise download it on first start, which is also a network download.
+3. Microphone and Accessibility permission for whatever launches the app. If you run the binary from VS Code's terminal, macOS asks you to allow **Visual Studio Code**; from Terminal.app, allow **Terminal**. The first start prompts for both.
+
+Homebrew itself is installed with the one-line installer from brew.sh. Its "Next steps" lines put it on your PATH; the app does not need that (it looks for `whisper-cli` in `/opt/homebrew/bin`), but you need it to run `brew` yourself.
+
+*Verified live on 2026-09-24: with these steps, dictating "um so like send it tomorrow" pasted "Send it tomorrow." on a real Mac (Xcode 27, macOS 26).*
 
 ## Steps
 
@@ -44,11 +48,11 @@ curl -X POST http://127.0.0.1:8787/v1/rewrite \
 
 ### 2. Build and run a DEBUG build
 
-From the repo root. The repo's own `.build/` can be stale after the folder rename, so use a scratch path:
+From the repo root (the folder that contains `Package.swift`; in the terminal run `cd "/path/to/new product (voice) idea"` first, keeping the quotes). If `swift build` complains about a missing XCFramework path, the `.build/` folder is stale from before the folder was renamed: delete it (`rm -rf .build`, it is only regenerable build output) and build again.
 
 ```
-swift build --scratch-path /tmp/murmur-build
-OPENWISPR_PROXY_URL=http://127.0.0.1:8787 /tmp/murmur-build/debug/open-wispr start
+swift build
+OPENWISPR_PROXY_URL=http://127.0.0.1:8787 .build/debug/open-wispr start
 ```
 
 Notes:
@@ -85,7 +89,7 @@ In every case below the dictation is never lost: the raw transcript is inserted 
 | Proxy stopped | Stop `npm run dev` | Raw text inserted. "Couldn't reach the rewrite service. Your raw transcript was inserted instead — nothing was lost." |
 | Offline | Turn Wi-Fi off and unplug Ethernet. The app skips the request when macOS reports no network path, even though the local proxy would have answered | "You're offline, and rewrite needs a connection…" and no request is sent |
 | Free tier (402) | Restart the mock with `MOCK_TIER=free npm run dev:mock` | "Rewrite is part of Pro…". Rewrites then stop for the rest of the session with no notice repeated |
-| Signed out (401) | Use "Clear dev session token" and re-paste an expired or garbled token, or wait an hour | "You're signed out. Sign in to keep using rewrite…". Rewrites stop for the session |
+| Signed out (401) | Use "Clear dev session token" and re-paste an expired or garbled token, or wait an hour. Note: the Worker also checks the token's issuer, so a token minted before Day 3 (no `iss`) is refused: re-mint with `npm run -s dev:token` | "You're signed out. Sign in to keep using rewrite…". Rewrites stop for the session |
 | No token at all | "Clear dev session token" | Status line "Rewrite: needs sign-in"; dictation behaves as if rewrite were off |
 | Rate limit (429) | More than 5 rewrites in a minute with the same user | "You've reached your rewrite limit…" |
 | Very long dictation (413) | Not reproducible with the mock without a very long transcript | "That dictation is too long to rewrite…" |
