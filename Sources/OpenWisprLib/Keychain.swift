@@ -5,7 +5,7 @@ import Security
 /// Per the TRD's v1 trust commitments, this is the ONLY thing stored here —
 /// no third-party OAuth tokens exist until the v2 agent layer is built.
 public enum Keychain {
-    private static let service = "com.goprimy.dictation-wip.auth"
+    static let service = "\(ProductInfo.bundleIdentifier).auth"
 
     public static func set(_ value: String, account: String) {
         let data = Data(value.utf8)

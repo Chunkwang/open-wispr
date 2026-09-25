@@ -12,10 +12,17 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     private var sleepWakeObservers: [NSObjectProtocol] = []
     var isReady = false
     public var lastTranscription: String?
+    /// Owns the rewrite decision. Built on the main thread at launch (it creates
+    /// no network object until a dictation passes the gate).
+    private var rewriteCoordinator: RewriteCoordinator!
+    /// Owns when, and whether, each finished dictation is pasted. Main thread only.
+    private var sequencer: DictationSequencer!
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         statusBar = StatusBarController()
         recorder = AudioRecorder()
+        rewriteCoordinator = RewriteCoordinator.production()
+        sequencer = DictationSequencer(environment: AppDictationEnvironment(delegate: self))
         registerSleepWakeObservers()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -24,6 +31,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        // Nothing is written to disk. If a dictation is still waiting, its raw text
+        // goes on the clipboard so quitting does not lose it.
+        sequencer?.flushPendingOnTerminate()
         unregisterSleepWakeObservers()
     }
 
@@ -192,6 +202,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             legacyID: newConfig.audioInputDeviceID
         )
         let deviceChanged = recorder.preferredDeviceID != newDeviceID
+        if newConfig.rewriteMode != config.rewriteMode {
+            // A session-long stop after a sign-in or Pro answer ends when the user
+            // turns rewrite off or on.
+            rewriteCoordinator.resetSession()
+        }
         config = newConfig
         recorder.preferredDeviceID = newDeviceID
         if deviceChanged {
@@ -308,7 +323,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
         currentRecordingURL = nil
         statusBar.state = .transcribing
-
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             let maxRecordings = Config.effectiveMaxRecordings(self.config.maxRecordings)
@@ -323,13 +337,37 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                 if maxRecordings > 0 {
                     RecordingStore.prune(maxCount: maxRecordings)
                 }
-                DispatchQueue.main.async {
-                    if !text.isEmpty {
-                        self.lastTranscription = text
-                        self.inserter.insert(text: text)
+                guard !text.isEmpty else {
+                    DispatchQueue.main.async {
+                        self.statusBar.state = .idle
+                        self.statusBar.buildMenu()
                     }
-                    self.statusBar.state = .idle
-                    self.statusBar.buildMenu()
+                    return
+                }
+                // Back on the main thread: the sequencer records the raw text and the
+                // frontmost app now, before any rewrite wait. The coordinator
+                // consults RewriteGate; nothing here decides whether text may leave
+                // the device. It calls `completion` exactly once.
+                DispatchQueue.main.async {
+                    let ticket = self.sequencer.begin(raw: text)
+                    self.rewriteCoordinator.process(
+                        transcript: text,
+                        // Sampled here, on the main thread, immediately before the
+                        // decision: not when recording stopped, before Whisper ran.
+                        mode: { self.config.rewriteMode },
+                        willRewrite: { self.sequencer.willRewrite(ticket) },
+                        completion: { outcome in
+                            // Synchronous (nothing sent) completions are already on
+                            // the main thread and finish in the same turn.
+                            if Thread.isMainThread {
+                                self.sequencer.finish(ticket, outcome: outcome)
+                            } else {
+                                DispatchQueue.main.async {
+                                    self.sequencer.finish(ticket, outcome: outcome)
+                                }
+                            }
+                        }
+                    )
                 }
             } catch {
                 if maxRecordings > 0 {
@@ -437,4 +475,56 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
+}
+
+
+/// Connects `DictationSequencer` to the real app: status bar, inserter, clipboard,
+/// frontmost application and recording state. Main thread only.
+final class AppDictationEnvironment: DictationEnvironment {
+    private unowned let delegate: AppDelegate
+
+    init(delegate: AppDelegate) {
+        self.delegate = delegate
+    }
+
+    func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    func schedule(after delay: TimeInterval, _ work: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    func frontmostProcessID() -> Int32? {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier
+    }
+
+    func isRecordingActive() -> Bool { delegate.recordingLifecycle.isRecording }
+
+    func insert(_ text: String) { delegate.inserter.insert(text: text) }
+
+    func copyToPasteboard(_ text: String) {
+        // This replaces whatever the user had on the clipboard. The notice that
+        // accompanies this path says the text is on the clipboard. Marking it as
+        // concealed/transient is planned work (Task 5.5) and needs testing across
+        // paste layouts, so it is deliberately not done here.
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    func setLastTranscription(_ raw: String) { delegate.lastTranscription = raw }
+
+    var phase: DictationPhase {
+        switch delegate.statusBar.state {
+        case .idle: return .idle
+        case .recording: return .recording
+        case .transcribing: return .transcribing
+        case .rewriting: return .rewriting
+        default: return .other
+        }
+    }
+
+    func showRewriting() { delegate.statusBar.state = .rewriting }
+    func showIdle() { delegate.statusBar.state = .idle }
+    func showNotice(_ message: String) { delegate.statusBar.showNotice(message) }
+    func refreshMenu() { delegate.statusBar.buildMenu() }
 }

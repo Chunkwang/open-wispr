@@ -369,6 +369,68 @@ final class ConfigTests: XCTestCase {
         XCTAssertNotNil(obj?["hotkey"])
         XCTAssertNotNil(obj?["hotkeys"])
     }
+
+    // MARK: - rewriteMode
+
+    private func decodeConfig(rewriteModeJSON: String?) throws -> Config {
+        let extra = rewriteModeJSON.map { ", \"rewriteMode\": \($0)" } ?? ""
+        let json = """
+        {
+            "hotkey": {"keyCode": 96, "modifiers": []},
+            "modelSize": "small.en",
+            "language": "fr",
+            "maxRecordings": 7\(extra)
+        }
+        """.data(using: .utf8)!
+        return try Config.decode(from: json)
+    }
+
+    func testRewriteModeDefaultsToOffWhenMissing() throws {
+        let config = try decodeConfig(rewriteModeJSON: nil)
+        XCTAssertEqual(config.rewriteMode, .off)
+    }
+
+    func testOldConfigWithoutRewriteModeKeepsEveryOtherSetting() throws {
+        let config = try decodeConfig(rewriteModeJSON: nil)
+        XCTAssertEqual(config.hotkey, HotkeyConfig(keyCode: 96, modifiers: []))
+        XCTAssertEqual(config.modelSize, "small.en")
+        XCTAssertEqual(config.language, "fr")
+        XCTAssertEqual(config.maxRecordings, 7)
+    }
+
+    func testRewriteModeDecodesOff() throws {
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "\"off\"").rewriteMode, .off)
+    }
+
+    func testRewriteModeDecodesAuto() throws {
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "\"auto\"").rewriteMode, .auto)
+    }
+
+    func testRewriteModeIsCaseAndWhitespaceTolerant() throws {
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "\" AUTO \"").rewriteMode, .auto)
+    }
+
+    func testRewriteModeUnknownStringFallsBackToOffAndKeepsOtherSettings() throws {
+        let config = try decodeConfig(rewriteModeJSON: "\"banana\"")
+        XCTAssertEqual(config.rewriteMode, .off)
+        XCTAssertEqual(config.language, "fr")
+        XCTAssertEqual(config.maxRecordings, 7)
+    }
+
+    func testRewriteModeWrongTypeFallsBackToOff() throws {
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "5").rewriteMode, .off)
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "true").rewriteMode, .off)
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "null").rewriteMode, .off)
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "{\"a\": 1}").rewriteMode, .off)
+    }
+
+    func testRewriteModeRoundTrips() throws {
+        var config = Config.defaultConfig
+        XCTAssertEqual(config.rewriteMode, .off)
+        config.rewriteMode = .auto
+        let data = try JSONEncoder().encode(config)
+        XCTAssertEqual(try Config.decode(from: data).rewriteMode, .auto)
+    }
 }
 
 private struct FlexBoolWrapper: Codable {

@@ -26,6 +26,30 @@ jobs:
         if: steps.filter.outputs.swift == 'true'
         run: swift build -c release
 
+      # Rewrite consent may only be granted by the disclosure sheet (Task 5.1).
+      # Until then a release binary must contain no code that writes it.
+      - name: Release binary cannot grant rewrite consent
+        if: steps.filter.outputs.swift == 'true'
+        run: |
+          BIN=.build/release/open-wispr
+          SYMBOLS=$(nm "$BIN" | grep -c recordAcceptance || true)
+          STRINGS=$(strings "$BIN" | grep -ci 'rewrite consent' || true)
+          echo "recordAcceptance symbols: $SYMBOLS, dev consent strings: $STRINGS"
+          test "$SYMBOLS" = "0" && test "$STRINGS" = "0"
+
+  worker-config-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The dev-only mock LLM must never be configured on the deployed Worker.
+      - name: LLM_PROVIDER is not set in wrangler.toml
+        run: |
+          if grep -n "LLM_PROVIDER" backend/proxy/wrangler.toml; then
+            echo "LLM_PROVIDER must not appear in wrangler.toml (dev-only mock switch)"
+            exit 1
+          fi
+
   unit-tests:
     runs-on: macos-15
     steps:

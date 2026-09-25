@@ -14,6 +14,9 @@ cp "$BINARY" "$APP_DIR/Contents/MacOS/open-wispr"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cp "$REPO_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+# MIT requires the licence and notices to travel with binary distributions.
+cp "$REPO_DIR/LICENSE" "$APP_DIR/Contents/Resources/LICENSE"
+cp "$REPO_DIR/NOTICE" "$APP_DIR/Contents/Resources/NOTICE"
 
 cat > "$APP_DIR/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -27,7 +30,7 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <key>CFBundleName</key>
     <string>Dictation-WIP</string>
     <key>CFBundleDisplayName</key>
-    <string>Dictation (Working Title)</string>
+    <string>Dictation (WIP)</string>
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>

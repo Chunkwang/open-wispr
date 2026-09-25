@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OpenWisprLib
 
 enum AppBundleLaunch {
     private static let bundleMarker = ".app/Contents/MacOS/"
@@ -19,7 +20,7 @@ enum AppBundleLaunch {
         let exec = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0]).resolvingSymlinksInPath()
         var dir = exec.deletingLastPathComponent()
         for _ in 0..<10 {
-            let candidate = dir.appendingPathComponent("Dictation-WIP.app", isDirectory: true)
+            let candidate = dir.appendingPathComponent("\(ProductInfo.bundleName).app", isDirectory: true)
             if FileManager.default.fileExists(atPath: candidate.path) {
                 return candidate
             }
@@ -29,9 +30,9 @@ enum AppBundleLaunch {
         }
 
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let homeApps = home.appendingPathComponent("Applications/Dictation-WIP.app", isDirectory: true)
+        let homeApps = home.appendingPathComponent("Applications/\(ProductInfo.bundleName).app", isDirectory: true)
         if FileManager.default.fileExists(atPath: homeApps.path) { return homeApps }
-        let system = URL(fileURLWithPath: "/Applications/Dictation-WIP.app", isDirectory: true)
+        let system = URL(fileURLWithPath: "/Applications/\(ProductInfo.bundleName).app", isDirectory: true)
         if FileManager.default.fileExists(atPath: system.path) { return system }
         return nil
     }
@@ -51,7 +52,7 @@ enum AppBundleLaunch {
             try process.run()
             process.waitUntilExit()
         } catch {
-            fputs("Error: could not start Dictation-WIP.app: \(error.localizedDescription)\n", stderr)
+            fputs("Error: could not start \(ProductInfo.bundleName).app: \(error.localizedDescription)\n", stderr)
             return false
         }
         if process.terminationStatus != 0 {

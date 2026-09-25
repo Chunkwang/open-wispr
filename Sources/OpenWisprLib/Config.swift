@@ -5,6 +5,13 @@ public struct LanguageOption: Equatable, Sendable {
     public let name: String
 }
 
+/// Whether dictation is passed through the Pro rewrite service.
+/// `off` (default) never touches the network; `auto` rewrites on release.
+public enum RewriteMode: String, Codable, Equatable {
+    case off
+    case auto
+}
+
 public struct Config: Codable {
     public var hotkeys: [HotkeyConfig]
     public var modelPath: String?
@@ -16,6 +23,7 @@ public struct Config: Codable {
     public var toggleMode: FlexBool?
     public var audioInputDeviceID: UInt32?
     public var audioInputDeviceUID: String?
+    public var rewriteMode: RewriteMode
 
     public var hotkey: HotkeyConfig {
         get { hotkeys[0] }
@@ -48,6 +56,7 @@ public struct Config: Codable {
         case toggleMode
         case audioInputDeviceID
         case audioInputDeviceUID
+        case rewriteMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -70,6 +79,12 @@ public struct Config: Codable {
         self.toggleMode = try c.decodeIfPresent(FlexBool.self, forKey: .toggleMode)
         self.audioInputDeviceID = try c.decodeIfPresent(UInt32.self, forKey: .audioInputDeviceID)
         self.audioInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .audioInputDeviceUID)
+        // Lenient on purpose: a bad value here must not fail the whole decode,
+        // because Config.load() falls back to defaults and would discard every
+        // other setting. Anything unrecognised means "off", the no-network choice.
+        let rawMode = (try? c.decodeIfPresent(String.self, forKey: .rewriteMode)) ?? nil
+        self.rewriteMode = rawMode
+            .flatMap { RewriteMode(rawValue: $0.trimmingCharacters(in: .whitespaces).lowercased()) } ?? .off
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -85,6 +100,7 @@ public struct Config: Codable {
         try c.encodeIfPresent(toggleMode, forKey: .toggleMode)
         try c.encodeIfPresent(audioInputDeviceID, forKey: .audioInputDeviceID)
         try c.encodeIfPresent(audioInputDeviceUID, forKey: .audioInputDeviceUID)
+        try c.encode(rewriteMode, forKey: .rewriteMode)
     }
 
     public init(
@@ -97,7 +113,8 @@ public struct Config: Codable {
         maxRecordings: Int?,
         toggleMode: FlexBool?,
         audioInputDeviceID: UInt32? = nil,
-        audioInputDeviceUID: String? = nil
+        audioInputDeviceUID: String? = nil,
+        rewriteMode: RewriteMode = .off
     ) {
         self.hotkeys = hotkeys.isEmpty
             ? [HotkeyConfig(keyCode: 63, modifiers: [])]
@@ -111,6 +128,7 @@ public struct Config: Codable {
         self.toggleMode = toggleMode
         self.audioInputDeviceID = audioInputDeviceID
         self.audioInputDeviceUID = audioInputDeviceUID
+        self.rewriteMode = rewriteMode
     }
 
     public static let supportedLanguages: [LanguageOption] = [

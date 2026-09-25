@@ -14,6 +14,7 @@ class StatusBarController: NSObject {
     private var downloadProgress: String?
     private var downloadPercent: Double = 0
     private var copiedFeedback = false
+    private var noticeGeneration = 0
     private var menuItemTargets: [MenuItemTarget] = []
     private var stateMenuItem: NSMenuItem?
 
@@ -24,9 +25,13 @@ class StatusBarController: NSObject {
         case idle
         case recording
         case transcribing
+        case rewriting
         case downloading
         case waitingForPermission
         case copiedToClipboard
+        /// One-shot message that is not a failure of the app, for example a
+        /// rewrite that fell back to the raw transcript. Cleared by `showNotice`.
+        case notice(String)
         case error(String)
     }
 
@@ -60,6 +65,21 @@ class StatusBarController: NSObject {
         }
     }
 
+    /// Shows `message` in the menu and icon for `seconds`, then returns to idle,
+    /// unless something else has taken over the status bar in the meantime.
+    func showNotice(_ message: String, for seconds: TimeInterval = 5) {
+        noticeGeneration += 1
+        let generation = noticeGeneration
+        state = .notice(message)
+        buildMenu()
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self = self, self.noticeGeneration == generation,
+                  case .notice = self.state else { return }
+            self.state = .idle
+            self.buildMenu()
+        }
+    }
+
     func updateDownloadProgress(_ text: String?, percent: Double = 0) {
         downloadProgress = text
         downloadPercent = percent
@@ -90,7 +110,7 @@ class StatusBarController: NSObject {
 
         let menu = NSMenu()
 
-        let titleItem = NSMenuItem(title: "Dictation (WIP) v\(OpenWispr.version)", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "\(ProductInfo.displayName) v\(OpenWispr.version)", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
 
@@ -104,9 +124,11 @@ class StatusBarController: NSObject {
             case .idle: stateLabel = "Ready"
             case .recording: stateLabel = "Recording..."
             case .transcribing: stateLabel = "Transcribing..."
+            case .rewriting: stateLabel = "Rewriting..."
             case .downloading: stateLabel = "Downloading model..."
             case .waitingForPermission: stateLabel = "Waiting for Accessibility permission..."
             case .copiedToClipboard: stateLabel = "Copied to clipboard"
+            case .notice(let message): stateLabel = message
             case .error(let message): stateLabel = "Error: \(message)"
             }
         }
@@ -283,6 +305,78 @@ class StatusBarController: NSObject {
         toggleItem.state = (config.toggleMode?.value ?? false) ? .on : .off
         menu.addItem(toggleItem)
 
+        #if DEBUG
+        // Rewrite is hidden from release builds until the disclosure sheet
+        // (Task 5.1) exists: without it there is no way to obtain consent, so a
+        // release menu offering the toggle would be a switch that cannot work.
+        let rewriteTarget = MenuItemTarget { [weak self] in
+            var cfg = Config.load()
+            cfg.rewriteMode = cfg.rewriteMode == .auto ? .off : .auto
+            try? cfg.save()
+            self?.onConfigChange?(cfg)
+        }
+        menuItemTargets.append(rewriteTarget)
+        let rewriteItem = NSMenuItem(title: "Rewrite", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+        rewriteItem.target = rewriteTarget
+        rewriteItem.state = config.rewriteMode == .auto ? .on : .off
+        menu.addItem(rewriteItem)
+
+        let rewriteStatusItem = NSMenuItem(
+            title: RewriteGate.statusLine(
+                mode: config.rewriteMode,
+                consent: .shared,
+                hasToken: RewritePipeline.keychainToken() != nil
+            ),
+            action: nil,
+            keyEquivalent: ""
+        )
+        rewriteStatusItem.isEnabled = false
+        menu.addItem(rewriteStatusItem)
+
+        // Dev-only stand-ins for the disclosure sheet and sign-in (Tasks 5.1 and
+        // Stage 3). Compiled out of release builds, which therefore have no way
+        // to record consent or store a token.
+        let consentGranted = RewriteConsent.shared.hasConsent
+        let consentTarget = MenuItemTarget { [weak self] in
+            if consentGranted {
+                RewriteConsent.shared.revoke()
+            } else {
+                RewriteConsent.shared.recordAcceptance()
+            }
+            self?.buildMenu()
+        }
+        menuItemTargets.append(consentTarget)
+        let consentItem = NSMenuItem(
+            title: consentGranted ? "Revoke rewrite consent (dev)" : "Grant rewrite consent (dev)",
+            action: #selector(MenuItemTarget.invoke),
+            keyEquivalent: ""
+        )
+        consentItem.target = consentTarget
+        menu.addItem(consentItem)
+
+        let pasteTokenTarget = MenuItemTarget { [weak self] in
+            // The token is never printed or logged.
+            if let token = NSPasteboard.general.string(forType: .string)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
+                Keychain.set(token, account: RewritePipeline.authAccount)
+            }
+            self?.buildMenu()
+        }
+        menuItemTargets.append(pasteTokenTarget)
+        let pasteTokenItem = NSMenuItem(title: "Paste dev session token from clipboard", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+        pasteTokenItem.target = pasteTokenTarget
+        menu.addItem(pasteTokenItem)
+
+        let clearTokenTarget = MenuItemTarget { [weak self] in
+            Keychain.delete(account: RewritePipeline.authAccount)
+            self?.buildMenu()
+        }
+        menuItemTargets.append(clearTokenTarget)
+        let clearTokenItem = NSMenuItem(title: "Clear dev session token", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+        clearTokenItem.target = clearTokenTarget
+        menu.addItem(clearTokenItem)
+        #endif
+
         menu.addItem(NSMenuItem.separator())
 
         let lastText = (NSApplication.shared.delegate as? AppDelegate)?.lastTranscription
@@ -357,7 +451,7 @@ class StatusBarController: NSObject {
             setIcon(StatusBarController.drawLogo(active: false))
         case .recording:
             startRecordingAnimation()
-        case .transcribing:
+        case .transcribing, .rewriting:
             startTranscribingAnimation()
         case .downloading:
             startDownloadingAnimation()
@@ -365,7 +459,7 @@ class StatusBarController: NSObject {
             setIcon(StatusBarController.drawLockIcon())
         case .copiedToClipboard:
             setIcon(StatusBarController.drawCheckmarkIcon())
-        case .error:
+        case .notice, .error:
             setIcon(StatusBarController.drawWarningIcon())
         }
     }
