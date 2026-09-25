@@ -59,7 +59,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         }
         transcriber = makeTranscriber(for: config)
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
             self.statusBar.reprocessHandler = { [weak self] url in
                 self?.reprocess(audioURL: url)
             }
