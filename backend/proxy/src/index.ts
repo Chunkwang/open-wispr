@@ -1,8 +1,9 @@
-import type { Env } from "./types";
+import type { Env, Tier } from "./types";
 import { authenticate } from "./auth";
 import { getUserTier } from "./tier";
-import { checkAndConsumeQuota } from "./rateLimit";
+import { checkAndConsumeQuota, type RateLimitResult } from "./rateLimit";
 import { rewriteTranscript } from "./claude";
+import { chooseProvider, mockRewrite } from "./llmProvider";
 import { handleStripeWebhook } from "./stripeWebhook";
 
 export default {
@@ -10,7 +11,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/v1/rewrite" && request.method === "POST") {
-      return handleRewrite(request, env);
+      return handleRewrite(request, env, url.hostname);
     }
     if (url.pathname === "/v1/stripe/webhook" && request.method === "POST") {
       return handleStripeWebhook(request, env);
@@ -19,14 +20,26 @@ export default {
   },
 };
 
-async function handleRewrite(request: Request, env: Env): Promise<Response> {
+async function handleRewrite(request: Request, env: Env, hostname: string): Promise<Response> {
   const user = await authenticate(request, env);
   if (!user) return json({ error: "unauthorized" }, 401);
 
-  const tier = await getUserTier(user.id, env);
+  // A failed tier or quota lookup is an outage, never "free" and never a raw 500.
+  // Errors are deliberately swallowed without logging: they may carry upstream details.
+  let tier: Tier;
+  try {
+    tier = await getUserTier(user.id, env);
+  } catch {
+    return json({ error: "service_unavailable" }, 503);
+  }
   if (tier !== "pro") return json({ error: "rewrite requires the Pro tier" }, 402);
 
-  const quota = await checkAndConsumeQuota(user.id, tier, env);
+  let quota: RateLimitResult;
+  try {
+    quota = await checkAndConsumeQuota(user.id, tier, env);
+  } catch {
+    return json({ error: "service_unavailable" }, 503);
+  }
   if (!quota.allowed) return json({ error: quota.reason }, 429);
 
   let body: { transcript?: unknown };
@@ -40,7 +53,10 @@ async function handleRewrite(request: Request, env: Env): Promise<Response> {
   }
 
   try {
-    const rewritten = await rewriteTranscript(body.transcript, env);
+    const rewritten =
+      chooseProvider(env, hostname) === "mock"
+        ? mockRewrite(body.transcript)
+        : await rewriteTranscript(body.transcript, env);
     return json({ rewritten });
   } catch {
     return json({ error: "rewrite failed" }, 502);

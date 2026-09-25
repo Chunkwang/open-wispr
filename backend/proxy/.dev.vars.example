@@ -1,0 +1,21 @@
+# Copy to .dev.vars (gitignored) for `wrangler dev`. Placeholder values only;
+# never put real keys in this file. RATE_LIMIT_KV is a binding, not a variable:
+# wrangler dev provides a local KV for it automatically.
+
+# Local mock Supabase (npm run dev:mock). Overrides [vars] in wrangler.toml.
+SUPABASE_URL=http://127.0.0.1:54321
+# Must start with "local-dev-" (mint-dev-token.mjs refuses anything else). Never use a real project secret.
+SUPABASE_JWT_SECRET=local-dev-jwt-secret-change-me-32-chars-min
+# Used by the Worker for profile lookups; a dummy value works against the mock.
+SUPABASE_SERVICE_ROLE_KEY=local-dev-service-role-key
+# Leave as a placeholder. Real provider keys are set as Wrangler secrets, never in this file.
+ANTHROPIC_API_KEY=sk-ant-placeholder
+# Dummy Stripe values; the mock Stripe server arrives later.
+STRIPE_SECRET_KEY=sk_test_placeholder
+STRIPE_WEBHOOK_SECRET=whsec_placeholder
+
+# Dev-only mock LLM. Uncomment to skip the real Claude call under `wrangler dev`.
+# Set here ONLY; never as a [vars] entry or Wrangler secret on the deployed Worker.
+# The Worker also requires a 127.0.0.1/localhost hostname, so it cannot activate
+# once deployed, but keep it out of deployed config anyway.
+# LLM_PROVIDER=mock

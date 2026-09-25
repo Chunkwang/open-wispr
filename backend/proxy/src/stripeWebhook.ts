@@ -46,7 +46,7 @@ export async function handleStripeWebhook(request: Request, env: Env): Promise<R
 }
 
 async function setUserTier(userId: string, tier: "free" | "pro", env: Env): Promise<void> {
-  await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`, {
     method: "PATCH",
     headers: {
       apikey: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -56,4 +56,5 @@ async function setUserTier(userId: string, tier: "free" | "pro", env: Env): Prom
     },
     body: JSON.stringify({ tier }),
   });
+  if (!res.ok) throw new Error(`profiles update failed: ${res.status}`);
 }

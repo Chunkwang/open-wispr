@@ -6,6 +6,8 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
+  /** Dev-only. "mock" enables the local mock LLM, and only on a loopback hostname. Never set on the deployed Worker. */
+  LLM_PROVIDER?: string;
 }
 
 export type Tier = "free" | "pro";
