@@ -68,6 +68,27 @@ elif command -v whisper-cli &>/dev/null; then
 fi
 
 if [ -n "$WHISPER_SRC" ]; then
+    # Preflight: fail the bundle build (not just at runtime) if the whisper-cli
+    # being bundled doesn't support a flag Transcriber.swift passes unconditionally.
+    # Transcriber currently treats an unknown-flag run as a SILENT SUCCESS (whisper-cli
+    # exits 0 with empty stdout on "error: unknown argument" — verified against the
+    # installed whisper.cpp 1.9.4), so a stale Homebrew whisper-cpp would ship a build
+    # that produces empty transcriptions with no error surfaced anywhere.
+    # Stopgap until Task 8.2 builds whisper.cpp from a pinned source revision instead
+    # of copying whatever's on PATH.
+    REQUIRED_WHISPER_FLAGS=("--suppress-nst")
+    WHISPER_HELP="$("$WHISPER_SRC" --help 2>&1 || true)"
+    for flag in "${REQUIRED_WHISPER_FLAGS[@]}"; do
+        if ! grep -qF -- "$flag" <<< "$WHISPER_HELP"; then
+            echo "✗ Error: bundled whisper-cli ($WHISPER_SRC) does not support required flag $flag" >&2
+            echo "  Transcriber.swift passes this flag unconditionally; an older whisper-cpp" >&2
+            echo "  will silently produce empty transcriptions (see Transcriber.arguments())." >&2
+            echo "  Upgrade whisper-cpp (brew upgrade whisper-cpp) before bundling." >&2
+            exit 1
+        fi
+    done
+    echo "✓ whisper-cli supports required flags: ${REQUIRED_WHISPER_FLAGS[*]}"
+
     cp "$WHISPER_SRC" "$APP_DIR/Contents/Resources/whisper/whisper-cli"
     chmod +x "$APP_DIR/Contents/Resources/whisper/whisper-cli"
     echo "✓ Bundled whisper-cli binary"
