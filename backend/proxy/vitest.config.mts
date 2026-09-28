@@ -27,6 +27,10 @@ export default defineConfig({
           ANTHROPIC_API_KEY: "sk-ant-test-CANARY-51d2e8",
           STRIPE_SECRET_KEY: "sk_test_CANARY_a1b2c3",
           STRIPE_WEBHOOK_SECRET: "whsec_CANARY_a1b2c3",
+          STRIPE_PRICE_ID: "price_test_CANARY_9f1e2d",
+          // Pinned empty (falsy) so a developer's .dev.vars can never redirect test-suite Stripe
+          // calls to their local mock-stripe.mjs — stripeClient.ts only honors this when truthy.
+          STRIPE_API_BASE_URL: "",
           TEST_EXAMPLE_JWT_SECRET: exampleJwtSecret(),
         },
       },
