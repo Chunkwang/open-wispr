@@ -646,17 +646,20 @@ describe("dev-only routes", () => {
     assert.equal((await mock.dev("/__dev/revoke", { email: "not-an-email" })).status, 400);
   });
 
-  it("reset: forgets codes, sessions, tokens, tiers, rate limits and failure rules", async () => {
+  it("reset: forgets codes, sessions, tokens, tiers, stripe_customer_id, rate limits and failure rules", async () => {
     const s = await mock.signIn();
     const id = s.user.id;
-    await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, { body: { tier: "free" }, headers: { authorization: "Bearer x" } });
+    const headers = { authorization: "Bearer x" };
+    await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, { body: { tier: "free", stripe_customer_id: "cus_before_reset" }, headers });
     await mock.dev("/__dev/fail", { route: "otp", mode: "503", times: 5 });
     assert.equal((await mock.dev("/__dev/reset")).status, 200);
     assert.equal(await mock.lastCode(s.email), undefined);
     assert.equal((await mock.refresh(s.refresh_token)).json.error_code, "refresh_token_not_found");
     assert.equal((await mock.otp(s.email)).status, 200, "the failure rule is gone");
-    const tier = await mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=tier`, { headers: { authorization: "Bearer x" } });
+    const tier = await mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=tier`, { headers });
     assert.deepEqual(tier.json, [{ tier: "pro" }]);
+    const customer = await mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=stripe_customer_id`, { headers });
+    assert.deepEqual(customer.json, [{ stripe_customer_id: null }]);
   });
 
   it("unknown /__dev routes and methods are 404", async () => {
@@ -737,6 +740,111 @@ describe("existing PostgREST profile endpoints", () => {
       await assert.rejects(dropped.otp(dropped.email()));
     } finally {
       await dropped.stop();
+    }
+  });
+});
+
+// billing.ts's checkout flow PATCHes {"stripe_customer_id": <id>} to persist the Stripe customer
+// it just created (setStripeCustomerId), and the portal endpoint later reads it back
+// (getStripeCustomerId, select=stripe_customer_id). Before this the mock's PATCH handler only
+// accepted {"tier": ...}, so every checkout's customer id save silently failed against the mock
+// (swallowed by billing.ts's best-effort catch) and /v1/billing/portal 404ed with "no_customer"
+// for everyone in local dev, always.
+describe("PATCH/GET /rest/v1/profiles stripe_customer_id (billing.ts checkout persistence)", () => {
+  const id = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+  const auth = { authorization: "Bearer service-role-for-tests" };
+
+  it("PATCH stripe_customer_id alone sets it without touching tier, and GET reads it back", async () => {
+    const mock = await startMock();
+    try {
+      const getCustomer = () => mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=stripe_customer_id`, { headers: auth });
+      assert.deepEqual((await getCustomer()).json, [{ stripe_customer_id: null }], "unset for a user never PATCHed");
+
+      const patch = await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, { body: { stripe_customer_id: "cus_abc123" }, headers: auth });
+      assert.equal(patch.status, 200);
+      assert.deepEqual(patch.json, [{ id, stripe_customer_id: "cus_abc123" }]);
+      assert.deepEqual((await getCustomer()).json, [{ stripe_customer_id: "cus_abc123" }]);
+
+      // tier is untouched by a stripe_customer_id-only PATCH (still the MOCK_TIER default).
+      const tier = await mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=tier`, { headers: auth });
+      assert.deepEqual(tier.json, [{ tier: "pro" }]);
+    } finally {
+      await mock.stop();
+    }
+  });
+
+  it("PATCH accepts return=minimal for a stripe_customer_id-only body (204), same as tier", async () => {
+    const mock = await startMock();
+    try {
+      const patch = await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, {
+        body: { stripe_customer_id: "cus_minimal" },
+        headers: { ...auth, prefer: "return=minimal" },
+      });
+      assert.equal(patch.status, 204);
+      const get = await mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=stripe_customer_id`, { headers: auth });
+      assert.deepEqual(get.json, [{ stripe_customer_id: "cus_minimal" }]);
+    } finally {
+      await mock.stop();
+    }
+  });
+
+  it("PATCH sets tier and stripe_customer_id together in one call, and select=<a,b> returns both", async () => {
+    const mock = await startMock();
+    try {
+      const patch = await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, {
+        body: { tier: "pro", stripe_customer_id: "cus_both" },
+        headers: auth,
+      });
+      assert.equal(patch.status, 200);
+      assert.deepEqual(patch.json, [{ id, tier: "pro", stripe_customer_id: "cus_both" }]);
+
+      const get = await mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=tier,stripe_customer_id`, { headers: auth });
+      assert.deepEqual(get.json, [{ tier: "pro", stripe_customer_id: "cus_both" }]);
+    } finally {
+      await mock.stop();
+    }
+  });
+
+  it("existing tier-only PATCH/GET behavior is unaffected: unqualified select and response shapes are unchanged", async () => {
+    const mock = await startMock();
+    try {
+      const get = () => mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=tier`, { headers: auth });
+      assert.deepEqual((await get()).json, [{ tier: "pro" }]);
+      const patch = await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, { body: { tier: "free" }, headers: { ...auth, prefer: "return=minimal" } });
+      assert.equal(patch.status, 204);
+      assert.deepEqual((await get()).json, [{ tier: "free" }]);
+      const withBody = await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, { body: { tier: "pro" }, headers: auth });
+      assert.deepEqual(withBody.json, [{ id, tier: "pro" }], "tier-only PATCH without select still omits stripe_customer_id");
+    } finally {
+      await mock.stop();
+    }
+  });
+
+  it("rejects a bad stripe_customer_id (non-string or empty) with 400, and a body with neither field", async () => {
+    const mock = await startMock();
+    try {
+      for (const body of [{ stripe_customer_id: "" }, { stripe_customer_id: 123 }, { stripe_customer_id: null }, {}]) {
+        const res = await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, { body, headers: auth });
+        assert.equal(res.status, 400, JSON.stringify(body));
+      }
+      // A bad tier alongside a valid stripe_customer_id is still rejected (existing tier validation applies).
+      const mixed = await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, { body: { tier: "gold", stripe_customer_id: "cus_x" }, headers: auth });
+      assert.equal(mixed.status, 400);
+    } finally {
+      await mock.stop();
+    }
+  });
+
+  it("select= with an unknown column is ignored, and no select= returns every known column", async () => {
+    const mock = await startMock();
+    try {
+      await mock.call("PATCH", `/rest/v1/profiles?id=eq.${id}`, { body: { tier: "free", stripe_customer_id: "cus_full" }, headers: auth });
+      const unknown = await mock.call("GET", `/rest/v1/profiles?id=eq.${id}&select=tier,nonsense_column`, { headers: auth });
+      assert.deepEqual(unknown.json, [{ tier: "free" }]);
+      const all = await mock.call("GET", `/rest/v1/profiles?id=eq.${id}`, { headers: auth });
+      assert.deepEqual(all.json, [{ id, tier: "free", stripe_customer_id: "cus_full" }]);
+    } finally {
+      await mock.stop();
     }
   });
 });

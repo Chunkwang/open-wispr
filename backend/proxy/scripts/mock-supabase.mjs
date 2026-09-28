@@ -3,9 +3,14 @@
 // in-memory, no dependencies (node:http and node:crypto), listens on 127.0.0.1 only.
 //
 // PostgREST (what the Worker calls):
-//   GET   /rest/v1/profiles?id=eq.<uuid>&select=tier            -> [{"tier":"pro"}]
-//   GET   /rest/v1/profiles?referral_code=eq.<code>&select=id   -> [{"id":<uuid>}] or []  (referral.ts)
-//   PATCH /rest/v1/profiles?id=eq.<uuid>  {"tier":"free"|"pro"}  (Stripe webhook)
+//   GET   /rest/v1/profiles?id=eq.<uuid>&select=tier                 -> [{"tier":"pro"}]
+//   GET   /rest/v1/profiles?id=eq.<uuid>&select=stripe_customer_id   -> [{"stripe_customer_id":<string>|null}]  (billing.ts)
+//   GET   /rest/v1/profiles?id=eq.<uuid>&select=<a,b,...>             -> one row with just those columns
+//                                                                        (id, tier, stripe_customer_id known; no select= returns all three)
+//   GET   /rest/v1/profiles?referral_code=eq.<code>&select=id        -> [{"id":<uuid>}] or []  (referral.ts)
+//   PATCH /rest/v1/profiles?id=eq.<uuid>  {"tier":"free"|"pro"}                      (Stripe webhook)
+//   PATCH /rest/v1/profiles?id=eq.<uuid>  {"stripe_customer_id":<string>}            (billing.ts checkout)
+//   PATCH /rest/v1/profiles?id=eq.<uuid>  {"tier":...,"stripe_customer_id":...}      (either or both fields, at least one required)
 //   GET   /rest/v1/referrals?referee_id=eq.<uuid>&select=id     -> [{"id":<uuid>}] or []  (referral.ts)
 //   POST  /rest/v1/referrals  {"referrer_id","referee_id","code"}  -> 201 [{"id",...}] (referral.ts)
 //
@@ -119,6 +124,8 @@ const issuer = `${supabaseUrl}/auth/v1`;
 
 /** user id (lowercase) -> tier, for users PATCHed through the Worker's webhook path */
 const tiers = new Map();
+/** user id (lowercase) -> stripe_customer_id, for users PATCHed through billing.ts's checkout flow */
+const stripeCustomerIds = new Map();
 /** referral_code (lowercase) -> profile id, seeded by POST /__dev/set-referral-code */
 const referralCodes = new Map();
 /** referrals rows recorded through POST /rest/v1/referrals: { id, referrer_id, referee_id, code } */
@@ -140,6 +147,7 @@ const failRules = [];
 
 function resetState() {
   tiers.clear();
+  stripeCustomerIds.clear();
   referralCodes.clear();
   referrals.length = 0;
   activeCodes.clear();
@@ -531,6 +539,25 @@ function userIdFilter(params) {
   return UUID.test(id) ? id.toLowerCase() : null;
 }
 
+/** The known selectable columns on the profiles table, and how to read each for a given id. */
+const PROFILE_COLUMNS = {
+  id: (id) => id,
+  tier: (id) => tiers.get(id) ?? defaultTier,
+  stripe_customer_id: (id) => stripeCustomerIds.get(id) ?? null,
+};
+
+/** Builds a profile row honoring a PostgREST `select=` list; no select (or an empty one) returns every known column. */
+function profileRow(id, select) {
+  const requested = (select ?? "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+  const columns = requested.length > 0 ? requested.filter((c) => c in PROFILE_COLUMNS) : Object.keys(PROFILE_COLUMNS);
+  const row = {};
+  for (const col of columns) row[col] = PROFILE_COLUMNS[col](id);
+  return row;
+}
+
 // Returns the code from a `referral_code=eq.<code>` filter, or null if absent.
 function referralCodeFilter(params) {
   const value = params.get("referral_code") ?? "";
@@ -553,17 +580,33 @@ async function handleProfiles(req, res, url) {
   const id = userIdFilter(url.searchParams);
   if (!id) return send(res, 400, { message: 'expected an `id=eq.<uuid>` or `referral_code=eq.<code>` filter' });
 
-  if (req.method === "GET") return send(res, 200, [{ tier: tiers.get(id) ?? defaultTier }]);
+  if (req.method === "GET") return send(res, 200, [profileRow(id, url.searchParams.get("select"))]);
 
   if (req.method === "PATCH") {
     const parsed = await readJson(req);
     if (!parsed.ok) return send(res, 400, { message: "invalid JSON body" });
     const body = parsed.value;
-    if (!body || typeof body !== "object" || !TIERS.has(body.tier)) return send(res, 400, { message: 'body must be {"tier":"free"|"pro"}' });
-    tiers.set(id, body.tier);
+    if (!isObject(body)) return send(res, 400, { message: 'body must include "tier" and/or "stripe_customer_id"' });
+    const hasTier = "tier" in body;
+    const hasCustomerId = "stripe_customer_id" in body;
+    if (!hasTier && !hasCustomerId) return send(res, 400, { message: 'body must include "tier" and/or "stripe_customer_id"' });
+    if (hasTier && !TIERS.has(body.tier)) return send(res, 400, { message: 'tier must be "free" or "pro"' });
+    if (hasCustomerId && (typeof body.stripe_customer_id !== "string" || body.stripe_customer_id.length === 0)) {
+      return send(res, 400, { message: "stripe_customer_id must be a non-empty string" });
+    }
+    if (hasTier) tiers.set(id, body.tier);
+    if (hasCustomerId) stripeCustomerIds.set(id, body.stripe_customer_id);
     // PostgREST answers 204 for Prefer: return=minimal (what the Worker sends).
     if (String(req.headers["prefer"] ?? "").includes("return=minimal")) return send(res, 204);
-    return send(res, 200, [{ id, tier: body.tier }]);
+    const select = url.searchParams.get("select");
+    if (select) return send(res, 200, [profileRow(id, select)]);
+    // No select= given: real PostgREST would return every column of the updated row, but this
+    // mock narrows return=representation to just id plus whichever field(s) this PATCH set, so a
+    // tier-only PATCH keeps answering the same shape it always has ([{id, tier}]).
+    const row = { id };
+    if (hasTier) row.tier = tiers.get(id);
+    if (hasCustomerId) row.stripe_customer_id = stripeCustomerIds.get(id);
+    return send(res, 200, [row]);
   }
 
   return send(res, 405, { message: "method not allowed" });
