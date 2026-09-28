@@ -18,16 +18,21 @@ macOS 13 (Ventura) or later on a Mac with Apple Silicon.
 
 ## Install
 
+### Recommended: macOS DMG Download
+
+Download the latest signed `.dmg` release from [Releases](https://github.com/human37/open-wispr/releases), open it, and drag **Dictation** to your Applications folder.
+
+### CLI & Developer Install
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/human37/open-wispr/main/scripts/install.sh | bash
 ```
 
-The script handles everything: installs via Homebrew, walks you through granting permissions, downloads the Whisper model, and starts the service. You'll see live feedback as each step completes.
+The script handles everything: installs via Homebrew or source, walks you through granting permissions, downloads the Whisper model, and starts the service.
 
-> **Note:** Recent versions of Homebrew (6.0+) have tightened security around third-party taps, so you may be asked to trust this package before it installs. If that happens, the installer prints the exact `brew trust` command to run.
+> **Note:** Recent versions of Homebrew (6.0+) have tightened security around third-party taps. If prompted, run `brew trust human37/open-wispr`.
 
-A waveform icon appears in your menu bar when it's running.
-
+A waveform icon appears in your menu bar when running.
 The default hotkey is the **Globe key** (🌐, bottom-left). Hold it, speak, release.
 
 > **[Full installation guide](docs/install-guide.md)** — permissions walkthrough with screenshots, non-English macOS instructions, and troubleshooting.

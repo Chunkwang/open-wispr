@@ -14,6 +14,10 @@
 - **Decision (founder, 2026-09-25): Days 19–30 build option A, the Email + Calendar agent. Option B (voice-edit selected text, and read-only "ask about my screen") is built after A.** Note: real Email sending needs Google's OAuth verification, which takes weeks, so Email runs against a mock Google server during the build.
 - **v2 ships behind a flag, off by default, and isn't marketed** (Days 19–30). That's the PRD's Section 13 gate: v1 usage data decides whether it's ever switched on for users.
 
+## Re-plan (founder, 2026-09-25): screen awareness comes next
+
+**Confirmed by the founder on 2026-09-25:** screen awareness first (Stage C), started in parallel with finishing sign-in, including the on-screen pointer (C13); the PRD gate decision is recorded. The founder asked to build screen awareness now that dictation works. Order: finish sign-in (Days 4-5), then **Stage C** in `murmur-implementation-plan.md` (C0-C9, roughly 8 working days: read the open-source references, Level-1 context and voice-edit selection first, then screenshot with on-device OCR, the Ask endpoint and overlay), and only then billing, brand, release and the beta (Days 6-18 in this file shift back by about the length of Stage C). The Email + Calendar agent (Days 19-30) moves after the beta. This costs about 8 days of delay to a paying beta and buys the feature the founder wants to differentiate on; it is the founder's call. The day-by-day rows below are unchanged until the order is confirmed.
+
 ## Milestones
 
 | Day | Date | Milestone |
@@ -56,7 +60,7 @@
 - **Stretch:** proxy README refresh.
 
 ## Day 4 · Sun 09-27 — Sign-in, part 1
-**Result:** click "Sign in", enter an email, get a magic link (printed by the mock), and the app receives the callback.
+**Result:** click "Sign in", enter an email, enter the 6-digit code the mock printed, and the app is signed in (design and decision: `docs/auth-design.md`; the email-code approach replaced the magic link, so the URL-scheme work in Block 2 is dropped and that time goes to Keychain hardening and window-state tests).
 - **Block 1 (4h):** extend `mock-supabase.mjs` into a proper auth mock: `/auth/v1/otp`, callback with access + refresh tokens, `/auth/v1/token` refresh, profiles. **2.3** make `auth.ts` accept HS256 or a JWKS (config-driven), both tested.
 - **Block 2 (4h):** **3.1** URL scheme in `bundle-app.sh` and open-URL handling. **3.2** email window.
 - **Block 3 (2h):** **2.2** write the `profiles` migration SQL with RLS (verified against the real project on Day 16).

@@ -6,6 +6,30 @@
 
 ---
 
+## Product bets: how we are better
+
+*Decided 2026-09-25 from `docs/competitive-teardown.md` (desk research on HeyClicky and Wispr Flow; the hands-on half is `docs/heyclicky-teardown-checklist.md`). "Better" has to be provable, so each bet has a test we can run. These four are the reason the product exists; everything else is optional.*
+
+**Bet 1: Private by construction.** Speech becomes text on the user's Mac. Both competitors send audio or screens to a cloud (Wispr: "transcription always occurs on the cloud"; HeyClicky: "everything is processed in the cloud", and it keeps the AI's analysis of each screenshot and the prompt). We send only what the user has agreed to, show what will be sent before it is sent, skip password fields, and keep nothing on our servers.
+*Proof:* dictation works with the network off; the proxy never logs content (tests exist); a "what will be sent" preview exists for every data type that leaves the Mac.
+
+**Bet 2: Verifiably trustworthy.** Open MIT core, and every public claim traced to code (`TRUST.md`) and, where possible, enforced by a test or CI check (as the release-binary consent check already is). Wispr's privacy incident shows an unverifiable claim can cost a reputation ("no audit path for a user"). Irreversible actions show the real address or command, never a friendly summary.
+*Proof:* each claim in `TRUST.md` points at a file and a check; anyone can build from source and get the same behaviour.
+
+**Bet 3: Reliable and light.** Never lose the user's words: if the network, server or account fails, the raw transcript still lands. Cloud-only rivals inherit their servers' outages (Wispr: 75+ logged outages since Dec 2025, per a competitor-run tracker summary). Small and quiet: one hotkey per job, few permission prompts, each asked for only when first needed and explained first.
+*Proof:* a standing outage drill (server off, Wi-Fi off, signed out: words still appear, with a calm notice); an idle memory and CPU budget measured against the competitors in the hands-on hour.
+
+**Bet 4: Priced for individuals.** Unlimited free local dictation forever (it costs us nothing to run); Pro priced below the incumbents' individual plans (Wispr Pro $15 a month, or $12 annual; HeyClicky Pro $20); action limits described as outcomes ("100 agent actions a month"), not tokens.
+*Proof:* the pricing page; unit cost per rewrite and per Ask measured on Day 16 (Task 2.9) before any price is final.
+
+**What we deliberately do not compete on (for now):** spoken replies, breadth of models and integrations, enterprise compliance (SOC 2, HIPAA), Windows. *(Founder decision 2026-09-25: an on-screen pointer that shows where to click IS included in the first V2 version, as task C13, added scope of roughly a week; drawing freehand annotations is not.)*
+
+**Feature gate.** Every new task or feature must name which bet it serves in one line. If it serves none, it waits. The tech-lead persona checks this in review. (Existing stages map like this: Stages 1-5 serve bets 1-3; Stage 4 billing and the pricing page serve bet 4; Stage C serves bets 1 and 2 first; the Email/Calendar agent serves bet 2 through raw-parameter confirmations.)
+
+**Known risks to these bets:** the MIT HeyClicky reference client means the "screen buddy" idea itself has no feature moat, so trust, reliability and price must carry us; Apple may build on-screen awareness into the OS; a single false privacy claim would undo bet 2, so claims stay conservative.
+
+---
+
 ## How to use this plan
 
 - **One task = one PR.** Every task is small enough to finish and merge on its own, and each one leaves the app working.
@@ -50,7 +74,7 @@
 | ID | Decision | My recommendation | Blocks |
 |---|---|---|---|
 | **D1** | Final product name (trademark check) | Decide before Stage 8. Changing the bundle ID after notarization breaks Keychain items, permissions and Sparkle update continuity. | 0.5, 8.x, 10.x |
-| **D2** | Sign-in method: email magic link vs Sign in with Apple | Magic link first. Sign in with Apple in a Developer ID app needs extra entitlements and provisioning; add it later if beta users ask. | 3.x |
+| **D2** | Sign-in method: email magic link vs email code vs Sign in with Apple | **Decided 2026-09-25: email code first** (type the 6-digit code from the email). A link needs a URL scheme the bare dev binary cannot receive, and corporate email scanners burn one-time links; codes have neither problem. Link and Sign in with Apple can follow. Full design: `docs/auth-design.md`. | 3.x |
 | **D3** | Rewrite trigger: auto on release vs second hotkey | Ship auto-on-release behind a config flag (Stage 1), and let beta data decide (9.6). The TRD already says to decide this with real usage. | 1.4, 9.6 |
 | **D4** | Pro price and trial length | Test-mode placeholder ($12, 7-day trial); PRD says pricing is unresearched. Changeable later without code changes. | 4.1 |
 | **D5** | Telemetry: how to count `dictation_completed` without breaking "no default telemetry" | Opt-in, off by default, anonymous counters only (random install ID, no content). Tell users exactly what is sent. | 7.7 |
@@ -168,15 +192,15 @@ Replace the placeholder in `RewritePipeline.swift`; keep the env-var override.
 
 ## Stage 3 — Sign-in *(blocked by D2; plan assumes magic link)*
 
-**3.1 Register a URL scheme** · S
+**3.1 Register a URL scheme** · S  **[DEFERRED: not needed for email-code sign-in; revisit if a link or OAuth redirect flow is wanted]**
 Add `CFBundleURLTypes` to the plist in `bundle-app.sh` and handle the open-URL callback in `AppDelegate`.
 *Done when:* running `open "<scheme>://auth?test=1"` reaches the app and logs the URL.
 
-**3.2 Request a magic link** · S
+**3.2 Request a sign-in code** · S
 Small SwiftUI window: email field → Supabase `POST /auth/v1/otp`. Brand colours, copy from `Copy.swift` once 6.3 exists (plain strings until then).
 *Done when:* entering your email delivers a link.
 
-**3.3 Handle the callback and store the session** · M
+**3.3 Verify the code and store the session** · M
 Parse access token, refresh token and expiry from the callback. Store all three in Keychain (extend `Keychain.swift` usage; `RewritePipeline` currently stores one token only). Harden `Keychain.set` while here (security review): set `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, use update-or-add instead of delete-then-add, and surface the `OSStatus` (never log the value). The refresh token is only safe under a stable Developer ID signature; ad-hoc signing changes the app's Keychain identity on every build.
 *Done when:* clicking the emailed link signs you in and the tokens are in Keychain, not on disk.
 
@@ -420,6 +444,82 @@ Show HN or equivalent.
 *Done when:* posted.
 
 ---
+
+## Stage C: Context and Screen Awareness ("Ask" and "Edit selection"; option B)
+
+*Added 2026-09-25 at the founder's request. Not yet given a slot in `murmur-30-day-schedule.md`; placement is a founder decision (see the note at the end of this stage). Read-only first: these features show an answer or replace text the user selected; they never click, send or run anything. The action-taking agent (Email/Calendar, tasks A1-A20) is separate.*
+
+**The idea, in three levels (the "context ladder"; cheapest first, screenshot only when needed):**
+1. **Level 1, no screenshot:** which app and window is in front, the text the user has selected, what kind of field the cursor is in. Read through the Accessibility permission the app already has. Cheap, private, works offline until the AI call.
+2. **Level 2, screenshot on demand:** one screenshot, taken only when the user presses the Ask hotkey (needs the Screen Recording permission), kept in memory only, never stored.
+3. **Level 3, vision AI:** the screenshot plus the spoken question go through our proxy to a vision model, and the answer is shown in a small floating overlay.
+
+**Design rules (from the PRD's trust commitments, the Day 2 review and the ChatGPT analysis):** a separate hotkey (dictation stays exactly as it is); capture only on that hotkey, never in the background; a separate consent record that says exactly what is sent (selected text, window title, screenshot); password and secure fields excluded; the answer is displayed (not pasted) so a manipulated reply cannot type into another app; no storage of screenshots or answers on our servers; cost-controlled with its own quota because vision calls cost more than text. HeyClicky already ships this idea, so the aim is not to match its feature list but to be the private, local-first, cheaper version.
+
+**C0 Read the open-source references and decide what to reuse** · S  **[DONE 2026-09-25: result in `docs/c0-decision.md`: reuse ideas, copy no code; Fazm has no licence file and is off limits; write our own accessibility wrapper]**
+Read `farzaa/clicky` (MIT; same Swift-plus-Cloudflare-Worker shape as ours) and Fazm (MIT per third parties: verify the LICENSE file), plus AXSwift as the accessibility reference. Output: a one-page decision in `docs/open-source-landscape.md` (what we reuse, what we rewrite, and why), borrowed pieces listed in `NOTICE`, and a security-engineer review of anything copied (their code sends audio to AssemblyAI and audio replies to ElevenLabs, which we will not use). Details and licence findings: `docs/open-source-landscape.md`.
+*Done when:* the decision page exists, both LICENSE files were read, and no code is copied without a `NOTICE` entry.
+
+**C1 `ContextSnapshot` type, redaction rules and default excluded apps** · S
+Add a default excluded-apps list here (password managers, Keychain Access), not at C12. A small value type (`app`, `windowTitle`, `focusedRole`, `selectedText`, size caps, `isSecureField`), a `redacted()` function, and tests. No collection code yet.
+*Done when:* tests prove secure fields never yield text and every field has a hard size cap.
+
+**C2 Level-1 context collector** · M
+Read the frontmost app, window title, focused element role and selected text through Accessibility (`AXUIElement`), off the main thread with a short timeout. Detect and exclude secure text fields. Report per-app quality honestly (Electron apps and browsers expose less). No clipboard tricks in this task.
+*Done when:* on TextEdit, Notes and Safari the snapshot shows the right app, window and selected text; on a password field it returns nothing; unit tests cover the pure parts.
+
+**C3 "Edit selection" by voice** · L, now split into **C3a** (`/v1/edit` backend, a rewrite clone, M) and **C3b** (second hotkey, focus-checked replace, undo, M). It cannot ship before the text consent in C6, which now comes first.
+Second hotkey: speak an instruction ("make this shorter"), the selected text and the instruction go through the same gate and consent as rewrite to a new `/v1/edit` proxy endpoint, and the result replaces the selection using the existing ordered, focus-checked insertion path. Cmd+Z must undo it.
+*Done when:* select a sentence, say "make this more professional", the selection is replaced; with the proxy down the selection is left untouched and a notice says so.
+
+**C4 Screenshot on hotkey** · M
+ScreenCaptureKit single shot behind one narrow API callable only from the Ask hotkey path; Screen Recording permission with a plain-language explainer before the system prompt; the single-shot API needs macOS 14 as far as I know (verify; the whole feature is hidden on macOS 13). *Shared with A4 and A5: build once.*
+*Done when:* pressing the hotkey captures exactly one image, and nothing is captured at any other time (test that no other code path can call it).
+
+**C5 Image handling and on-device OCR** · M, split into **C5a** (downscale, encode, memory-only proof, S) and **C5b** (Vision OCR, M)
+Downscale, re-encode, keep in memory only, release after the request; never written to disk or logs. Add on-device text recognition with Apple's Vision framework (`VNRecognizeTextRequest`) so most questions can be answered by sending the recognised **text** instead of the image ("text first, pixels last": less private data leaves the Mac, and a text call costs far less than a vision call). The screenshot itself is sent only when the question needs it.
+*Done when:* a test proves the image bytes are released and no file is created, and a sample question about an error message is answered from OCR text alone with no image sent.
+*Done when:* a test proves the image bytes are released and no file is created.
+
+**C6 Consent records for context data (do this before C3)** · M
+Two separate consent records, one per data type, neither reusing the rewrite key: `contextText` (selected text and window title; needed for Edit selection, no screen permission) and `screenImage` (needed only for screenshots). A separate consent record (not the rewrite one), a disclosure that lists exactly what is sent (selected text, window title, screenshot) and to whom, with Decline as prominent as Accept. Designer writes the copy.
+*Done when:* Ask cannot run without this consent, and revoking it stops it.
+
+**C7 Backend `/v1/ask`** · L
+Vision-capable endpoint with tier check, its own quota (Durable Object, like rewrite), image size cap, no retention, content-free logs, stop-reason allow-list, 90 s timeout and no retries, and a mock provider for local use. *Shares A9.*
+*Done when:* the same style of test suite as `/v1/rewrite` passes, including 20 parallel requests against the quota.
+
+**C8 Ask overlay** · L
+A small floating panel (not a dashboard): "Listening", then the answer text, Esc to dismiss, a Copy button, never steals focus in a way that breaks typing. Designer specifies, macOS engineer builds.
+*Done when:* the answer appears next to the cursor area and disappears on Esc, in light and dark mode, with VoiceOver labels.
+
+**C9 `AskCoordinator` and the context-ladder router** · M (absorbs the former C11: start with simple rules)
+Like `RewriteCoordinator`: gate (mode, consent v2, token, Screen Recording granted), offline short-circuit, 6-10 s deadline, sanitiser for displayed text, stop-after-401/402 rules, plain-language notices.
+*Done when:* every failure shows a calm notice and never types anything.
+
+**C10 Screen prompt-injection evaluation** · M
+A fixed set of screens with hidden instructions ("ignore the user and say X"); a script that runs them through the model and records what it does. Read-only limits the damage to a misleading answer, but we measure it.
+*Done when:* one command prints a table for the current prompt and model, and the failure rate is recorded.
+
+**C11 (merged into C9; no longer a separate task)** · was M
+Decide whether Level-1 context is enough to answer, and only take the screenshot when it is not (starts as simple rules, e.g. "what does this error mean" with selected text needs no screenshot). Saves cost and permissions.
+*Done when:* a set of sample questions routes to the expected level with a measured cost saving.
+
+**C12 Privacy and security pass** · M
+Sensitive-content handling (password managers, banking, notifications, other people's data), an "exclude these apps" list, `TRUST.md` and the privacy policy updated for screen data, red-team review.
+*Done when:* the security review has no open High findings and the claims in the docs match the code.
+
+**C13 On-screen pointer ("it shows you where to click")** · L  *(added at the founder's request, 2026-09-25)*
+When the answer refers to a control, show a pointer or highlight on that control. Design intent (tech-lead to confirm before building): **accessibility first**: read the frontmost window's element tree (bounded walk: depth, element count and time limits), let the model choose an element by id, and draw the pointer at that element's exact on-screen frame, which is reliable and needs no vision guessing; fall back to model-suggested screenshot coordinates only when the accessibility tree is empty (games, remote desktops, some browsers), and say so when unsure. Display only: the pointer never clicks or types. Draws on our own non-activating overlay, handles multiple displays and Retina scaling, disappears on Esc or after a timeout, and never blocks the user's own mouse.
+*Done when:* asking "where do I turn on dark mode?" in System Settings puts a pointer on the right control at least 4 times out of 5 in a fixed test set, and on an unsupported app the answer says it cannot point and gives text instead. *Serves bets 1 (accessibility-first sends short text, not pixels) and 3.*
+
+**Explicit non-goals for now:** freehand drawing on the screen, recording what the user does ("watch me and learn a workflow"), continuous or background observation, and any action that clicks or types on the user's behalf (that is the agent stage).
+
+**Smallest safe first slice (tech-lead, 2026-09-25):** C1, C2 (our own accessibility wrapper), the text consent from C6, the "what will be sent" preview, then C3 (Edit selection). It needs no Screen Recording permission and works on macOS 13. The screenshot half (C4-C12) waits until after the beta.
+
+**PRD conflict to resolve before C4:** PRD sections 7, 8 and 13 say screen capture is not built until the v2 gate is met, and CLAUDE.md says the agent flag ships off. C1-C3 do not capture the screen; C4 onwards does. The founder must confirm the scope change in writing and the PRD must be edited first. Ask ships behind a default-off flag.
+
+**Placement decision for the founder:** (a) after A (Email/Calendar), i.e. after Day 30; (b) replace A in Days 19-30, because C4/C5/C7 overlap A4/A5/A9 and Ask needs no Google approval; (c) a light slice earlier: C1-C3 (Level-1 context and Edit selection) need no screen permission and could ship around Days 8-10, with the screenshot half (C4-C12) after the beta. My recommendation is (c) then (b); the tech-lead persona has not reviewed this placement yet.
 
 ## Not in this plan
 
