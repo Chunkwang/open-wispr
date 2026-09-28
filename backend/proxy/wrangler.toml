@@ -20,6 +20,17 @@ SUPABASE_URL = "REPLACE_WITH_SUPABASE_PROJECT_URL"
 # SUPABASE_JWT_SECRET is not needed). Any other value makes the Worker answer 500 misconfigured.
 # Day 16: set this to match the real project's signing-key setting.
 JWT_VERIFY_MODE = "hs256"
+# The one Pro plan Checkout Sessions are created for. Not secret, but must not stay
+# "price_placeholder" here: the Worker refuses to serve /v1/billing/* and the webhook off
+# loopback while it does (see hostGuard.ts).
+STRIPE_PRICE_ID = "REPLACE_WITH_STRIPE_PRICE_ID"
+# Where Checkout/the billing portal send the browser back once a real domain exists (D1).
+# Optional: unset falls back to a placeholder example.com page (billing.ts).
+# BILLING_SUCCESS_URL = "https://REPLACE_WITH_REAL_DOMAIN/billing/success"
+# BILLING_CANCEL_URL = "https://REPLACE_WITH_REAL_DOMAIN/billing/cancel"
+# BILLING_PORTAL_RETURN_URL = "https://REPLACE_WITH_REAL_DOMAIN/billing/success"
+# STRIPE_API_BASE_URL must NEVER be set here: it exists only for .dev.vars (local mock Stripe),
+# and stripeClient.ts refuses to honor it off loopback even if it were.
 
 # Secrets (never committed) — set with:
 #   wrangler secret put SUPABASE_JWT_SECRET

@@ -21,6 +21,7 @@ const MIN_JWT_SECRET_LENGTH = 32;
 const PLACEHOLDER_STRIPE_WEBHOOK_SECRET = "whsec_placeholder";
 const PLACEHOLDER_STRIPE_SECRET_KEY = "sk_test_placeholder";
 const PLACEHOLDER_SERVICE_ROLE_KEY = "local-dev-service-role-key";
+const PLACEHOLDER_STRIPE_PRICE_ID = "price_placeholder";
 
 export type JwtVerifyMode = "hs256" | "jwks";
 
@@ -89,15 +90,21 @@ export function unsafeJwtSecretOffLoopback(
   );
 }
 
-/** True when the webhook route is reached off loopback while a placeholder Stripe or service-role value is configured. */
-export function placeholderWebhookConfigOffLoopback(
-  env: Pick<Env, "STRIPE_WEBHOOK_SECRET" | "STRIPE_SECRET_KEY" | "SUPABASE_SERVICE_ROLE_KEY">,
+/**
+ * True when any Stripe-touching route (the webhook, and POST /v1/billing/checkout and
+ * /v1/billing/portal) is reached off loopback while a placeholder Stripe, price, or
+ * service-role value is still configured. Shared by all three so none can be wired up
+ * later without this guard, the same reasoning as authenticate()'s own guards.
+ */
+export function placeholderStripeConfigOffLoopback(
+  env: Pick<Env, "STRIPE_WEBHOOK_SECRET" | "STRIPE_SECRET_KEY" | "STRIPE_PRICE_ID" | "SUPABASE_SERVICE_ROLE_KEY">,
   hostname: string
 ): boolean {
   if (isLoopbackHostname(hostname)) return false;
   return (
     env.STRIPE_WEBHOOK_SECRET === PLACEHOLDER_STRIPE_WEBHOOK_SECRET ||
     env.STRIPE_SECRET_KEY === PLACEHOLDER_STRIPE_SECRET_KEY ||
+    env.STRIPE_PRICE_ID === PLACEHOLDER_STRIPE_PRICE_ID ||
     env.SUPABASE_SERVICE_ROLE_KEY === PLACEHOLDER_SERVICE_ROLE_KEY
   );
 }

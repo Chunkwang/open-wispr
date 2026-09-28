@@ -14,11 +14,13 @@ import { checkAndConsumeQuota, type RateLimitResult } from "./rateLimit";
 import { editSelection, rewriteTranscript } from "./claude";
 import { preserveEdgeWhitespace, type EditContext } from "./editPrompt";
 import { chooseProvider, mockEdit, mockRewrite } from "./llmProvider";
-import { placeholderWebhookConfigOffLoopback } from "./hostGuard";
+import { placeholderStripeConfigOffLoopback } from "./hostGuard";
 import { readBodyCapped } from "./httpBody";
 import { handleEvents } from "./events";
 import { handleReferralRedeem } from "./referral";
 import { handleStripeWebhook } from "./stripeWebhook";
+import { handleBillingCheckout, handleBillingPortal } from "./billing";
+import { handleMe } from "./me";
 
 export { QuotaCounter } from "./quotaCounter";
 
@@ -38,12 +40,29 @@ export default {
     if (url.pathname === "/v1/referral/redeem" && request.method === "POST") {
       return handleReferralRedeem(request, env, url.hostname);
     }
+    if (url.pathname === "/v1/me" && request.method === "GET") {
+      return handleMe(request, env, url.hostname);
+    }
     if (url.pathname === "/v1/stripe/webhook" && request.method === "POST") {
-      if (placeholderWebhookConfigOffLoopback(env, url.hostname)) {
+      if (placeholderStripeConfigOffLoopback(env, url.hostname)) {
         console.error("misconfigured: refusing to serve the webhook with placeholder configuration");
         return json({ error: "misconfigured" }, 500);
       }
       return handleStripeWebhook(request, env);
+    }
+    if (url.pathname === "/v1/billing/checkout" && request.method === "POST") {
+      if (placeholderStripeConfigOffLoopback(env, url.hostname)) {
+        console.error("misconfigured: refusing to serve billing/checkout with placeholder configuration");
+        return json({ error: "misconfigured" }, 500);
+      }
+      return handleBillingCheckout(request, env, url.hostname);
+    }
+    if (url.pathname === "/v1/billing/portal" && request.method === "POST") {
+      if (placeholderStripeConfigOffLoopback(env, url.hostname)) {
+        console.error("misconfigured: refusing to serve billing/portal with placeholder configuration");
+        return json({ error: "misconfigured" }, 500);
+      }
+      return handleBillingPortal(request, env, url.hostname);
     }
     return new Response("Not found", { status: 404 });
   },

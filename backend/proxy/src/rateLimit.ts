@@ -1,6 +1,6 @@
 import type { Env, QuotaKind, Tier } from "./types";
 import { QUOTA_LIMITS } from "./types";
-import type { ConsumeResult } from "./quotaCounter";
+import type { ConsumeResult, Remaining } from "./quotaCounter";
 
 export type RateLimitResult = ConsumeResult;
 
@@ -30,6 +30,24 @@ export async function checkAndConsumeQuota(userId: string, tier: Tier, env: Env,
   });
   try {
     return await Promise.race([stub.consume(QUOTA_LIMITS[kind][tier], Date.now()), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Read-only counterpart to checkAndConsumeQuota: reports how much allowance is left without
+ * spending any of it. Same Durable Object, same id derivation, same 3 s deadline (a hung store
+ * must not hang GET /v1/me). Throws on failure or timeout; the caller answers 503.
+ */
+export async function peekQuota(userId: string, tier: Tier, env: Env, kind: QuotaKind = "rewrite"): Promise<Remaining> {
+  const stub = env.QUOTA.get(env.QUOTA.idFromName(kind === "rewrite" ? userId : `${kind}:${userId}`));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("quota store timed out")), QUOTA_DEADLINE_MS);
+  });
+  try {
+    return await Promise.race([stub.remaining(QUOTA_LIMITS[kind][tier], Date.now()), deadline]);
   } finally {
     clearTimeout(timer);
   }

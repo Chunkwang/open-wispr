@@ -136,20 +136,35 @@ export interface OutboundCall {
 export interface Upstream {
   supabase: Handler;
   anthropic: Handler;
+  /** Stripe API calls made by billing.ts (customers, Checkout Sessions, portal Sessions). Not the
+   * webhook: that is never outbound-fetched, only received (see test/stripe-webhook.test.ts). */
+  stripe: Handler;
   calls: OutboundCall[];
   supabaseCalls(): OutboundCall[];
   anthropicCalls(): OutboundCall[];
+  stripeCalls(): OutboundCall[];
 }
 
 let fetchSpy: MockInstance<typeof fetch> | undefined;
+
+/** A minimal but shaped-enough Stripe API stand-in for the three calls billing.ts makes. */
+function defaultStripeReply(request: Request): Response {
+  const path = new URL(request.url).pathname;
+  if (path === "/v1/customers") return jsonReply({ id: "cus_test", object: "customer", metadata: {} });
+  if (path === "/v1/checkout/sessions") return jsonReply({ id: "cs_test", object: "checkout.session", url: "https://checkout.stripe.com/test-session" });
+  if (path === "/v1/billing_portal/sessions") return jsonReply({ id: "bps_test", object: "billing_portal.session", url: "https://billing.stripe.com/test-session" });
+  return jsonReply({ error: { message: `unhandled test stripe route: ${path}` } }, 500);
+}
 
 export function installUpstream(): Upstream {
   const upstream: Upstream = {
     supabase: () => tierReply("pro"),
     anthropic: () => claudeReply("Rewritten."),
+    stripe: (request) => defaultStripeReply(request),
     calls: [],
     supabaseCalls: () => upstream.calls.filter((c) => c.url.startsWith(SUPABASE_URL)),
     anthropicCalls: () => upstream.calls.filter((c) => c.url.startsWith("https://api.anthropic.com")),
+    stripeCalls: () => upstream.calls.filter((c) => c.url.startsWith("https://api.stripe.com")),
   };
   fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = new Request(input as RequestInfo, init);
@@ -162,6 +177,7 @@ export function installUpstream(): Upstream {
     // Route the original request so abort signals reach the handler.
     if (request.url.startsWith(`${SUPABASE_URL}/`)) return runHandler(upstream.supabase, request, init?.signal ?? request.signal);
     if (request.url.startsWith("https://api.anthropic.com/")) return runHandler(upstream.anthropic, request, init?.signal ?? request.signal);
+    if (request.url.startsWith("https://api.stripe.com/")) return runHandler(upstream.stripe, request, init?.signal ?? request.signal);
     throw new TypeError(`unexpected outbound fetch in test: ${new URL(request.url).origin}`);
   });
   return upstream;
@@ -228,6 +244,55 @@ export function restoreClock(): void {
   vi.useRealTimers();
 }
 
+// ---------------------------------------------------------------------------
+// Stripe webhook payload signing (test/stripe-webhook.test.ts). Replicates the real HMAC-SHA256
+// timestamped scheme (`t=<unix seconds>,v1=<hex hmac of "<t>.<payload>">`) that
+// stripe.webhooks.constructEventAsync verifies in src/stripeWebhook.ts — the same scheme
+// scripts/mock-stripe.mjs uses to fire a real signed request at the Worker under `wrangler dev`.
+// ---------------------------------------------------------------------------
+
+export async function signStripeWebhook(payload: string, secret: string): Promise<string> {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${payload}`));
+  const hex = Array.from(new Uint8Array(signature), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `t=${timestamp},v1=${hex}`;
+}
+
+/** A `customer.subscription.*` event payload, shaped like the real Stripe API's. */
+export function stripeSubscriptionEventPayload(
+  type: "customer.subscription.created" | "customer.subscription.updated" | "customer.subscription.deleted",
+  opts: { status?: string; supabaseUserId?: string | null; subscriptionId?: string; customerId?: string } = {}
+): string {
+  const metadata = opts.supabaseUserId === null ? {} : { supabase_user_id: opts.supabaseUserId ?? newUserId() };
+  return JSON.stringify({
+    id: "evt_test",
+    object: "event",
+    api_version: "2024-11-01",
+    created: Math.floor(Date.now() / 1000),
+    livemode: false,
+    type,
+    data: {
+      object: {
+        id: opts.subscriptionId ?? "sub_test",
+        object: "subscription",
+        customer: opts.customerId ?? "cus_test",
+        status: opts.status ?? "active",
+        metadata,
+      },
+    },
+  });
+}
+
+/** Signs and posts a Stripe webhook event through the real Worker handler. */
+export async function postStripeWebhook(payload: string, opts: { secret?: string; signature?: string | null; env?: Env; host?: string } = {}): Promise<Response> {
+  const secret = opts.secret ?? baseEnv.STRIPE_WEBHOOK_SECRET;
+  const signature = opts.signature === undefined ? await signStripeWebhook(payload, secret) : opts.signature;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (signature !== null) headers["stripe-signature"] = signature;
+  return call({ path: "/v1/stripe/webhook", method: "POST", host: opts.host, headers, body: payload, env: opts.env ?? makeEnv() });
+}
+
 /** An env whose quota Durable Object always fails. The ONE place tests break the quota binding by name. */
 export function brokenQuotaEnv(): Env {
   const down = () => {
@@ -235,16 +300,17 @@ export function brokenQuotaEnv(): Env {
   };
   const namespace = {
     idFromName: (name: string) => ({ name }),
-    get: () => ({ consume: down }),
+    get: () => ({ consume: down, remaining: down }),
   } as unknown as Env["QUOTA"];
   return makeEnv({ QUOTA: namespace });
 }
 
-/** An env whose quota Durable Object never answers (a hung store). */
+/** An env whose quota Durable Object never answers (a hung store). Both methods hang: `consume`
+ * for the metered endpoints, `remaining` for GET /v1/me's read-only peekQuota. */
 export function hangingQuotaEnv(): Env {
   const namespace = {
     idFromName: (name: string) => ({ name }),
-    get: () => ({ consume: () => new Promise(() => {}) }),
+    get: () => ({ consume: () => new Promise(() => {}), remaining: () => new Promise(() => {}) }),
   } as unknown as Env["QUOTA"];
   return makeEnv({ QUOTA: namespace });
 }

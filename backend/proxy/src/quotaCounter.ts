@@ -7,6 +7,12 @@ export interface QuotaLimits {
 
 export type ConsumeResult = { allowed: true } | { allowed: false; reason: "minute_limit" | "monthly_limit" };
 
+/** What `remaining` reports: room left in each window, as of `nowMs`. Never negative. */
+export interface Remaining {
+  perMinute: number;
+  perMonth: number;
+}
+
 /**
  * One instance per user (`QUOTA.idFromName(userId)`). Holds usage COUNTS only:
  * one row per active window, never anything about a request's content, and not
@@ -55,5 +61,26 @@ export class QuotaCounter extends DurableObject {
       sql.exec(upsert, "month", month);
       return { allowed: true };
     });
+  }
+
+  /**
+   * Read-only: how much of each window's allowance is left, without consuming any of it (no
+   * write, so no transaction is needed — a Durable Object already runs one request at a time).
+   * Used by GET /v1/me to report `remainingThisMonth` without spending the user's own quota just
+   * by checking it. Same window derivation as `consume`, so it reports exactly what a `consume`
+   * call made at the same instant would have checked against.
+   */
+  remaining(limits: QuotaLimits, nowMs: number): Remaining {
+    const minute = String(Math.floor(nowMs / 60_000));
+    const month = new Date(nowMs).toISOString().slice(0, 7);
+    const sql = this.ctx.storage.sql;
+    const count = (kind: string, window: string): number => {
+      const row = sql.exec("SELECT count FROM windows WHERE kind = ? AND window = ?", kind, window).toArray()[0];
+      return row ? Number(row.count) : 0;
+    };
+    return {
+      perMinute: Math.max(0, limits.perMinute - count("minute", minute)),
+      perMonth: Math.max(0, limits.perMonth - count("month", month)),
+    };
   }
 }

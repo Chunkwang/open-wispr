@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:mock": "node scripts/mock-supabase.mjs",
+    "dev:mock:stripe": "node scripts/mock-stripe.mjs",
     "dev:token": "node scripts/mint-dev-token.mjs",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",

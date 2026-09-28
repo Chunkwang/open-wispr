@@ -14,6 +14,20 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
+  /** The subscription Price to check out (one Pro plan in v1). */
+  STRIPE_PRICE_ID: string;
+  /**
+   * Dev-only. When set, and only on a loopback hostname, the Stripe SDK client is pointed at this
+   * URL (e.g. `http://127.0.0.1:54323`, `scripts/mock-stripe.mjs`) instead of api.stripe.com. Off
+   * loopback this is never honored, even if somehow set (see stripeClient.ts) — the same fail-closed
+   * treatment hostGuard.ts gives the Supabase JWKS URL.
+   */
+  STRIPE_API_BASE_URL?: string;
+  /** Where Checkout sends the browser back. Optional: falls back to a placeholder page (see billing.ts). */
+  BILLING_SUCCESS_URL?: string;
+  BILLING_CANCEL_URL?: string;
+  /** Where the Stripe customer portal sends the browser back. Optional, same fallback treatment. */
+  BILLING_PORTAL_RETURN_URL?: string;
   /** Dev-only. "mock" enables the local mock LLM, and only on a loopback hostname. Never set on the deployed Worker. */
   LLM_PROVIDER?: string;
 }
@@ -65,13 +79,41 @@ export const EVENTS_LIMITS: Record<Tier, { perMinute: number; perMonth: number }
   pro: { perMinute: 60, perMonth: 100_000 },
 };
 
+/**
+ * Limits for POST /v1/billing/checkout and POST /v1/billing/portal, keyed by the authenticated
+ * user (own Durable Object). Both tiers hold the same numbers, same reasoning as REFERRAL_LIMITS:
+ * a legitimate user creates a handful of these sessions ever, so any cap above "a handful" is
+ * generous, and the point is stopping an authenticated caller from hammering Stripe session
+ * creation (a real, metered call against Stripe's API, mock or not) rather than throughput.
+ */
+export const BILLING_LIMITS: Record<Tier, { perMinute: number; perMonth: number }> = {
+  free: { perMinute: 5, perMonth: 30 },
+  pro: { perMinute: 5, perMonth: 30 },
+};
+
+/**
+ * Limits for GET /v1/me, keyed by the authenticated user (own Durable Object, see rateLimit.ts).
+ * This route never calls a paid provider, so it is not the "no unmetered path to the paid model"
+ * hard stop, but every call still does one uncached Supabase PostgREST fetch and one Durable
+ * Object RPC, and without a cap an authenticated caller could hammer both for free. Both tiers
+ * hold the same numbers, same reasoning as REFERRAL_LIMITS/BILLING_LIMITS. Generous on purpose:
+ * the implementation plan (4.6) has the client poll this for up to two minutes after checkout,
+ * and this limit is comfortably above that.
+ */
+export const ME_LIMITS: Record<Tier, { perMinute: number; perMonth: number }> = {
+  free: { perMinute: 60, perMonth: 100_000 },
+  pro: { perMinute: 60, perMonth: 100_000 },
+};
+
 /** Which counter a request draws on. Each kind has its own limits table and its own per-user counter. */
-export type QuotaKind = "rewrite" | "edit" | "referral" | "events";
+export type QuotaKind = "rewrite" | "edit" | "referral" | "events" | "billing" | "me";
 export const QUOTA_LIMITS: Record<QuotaKind, Record<Tier, { perMinute: number; perMonth: number }>> = {
   rewrite: TIER_LIMITS,
   edit: EDIT_TIER_LIMITS,
   referral: REFERRAL_LIMITS,
   events: EVENTS_LIMITS,
+  billing: BILLING_LIMITS,
+  me: ME_LIMITS,
 };
 
 /**
