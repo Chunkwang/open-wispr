@@ -1,4 +1,5 @@
 .build/
+.build-scratch/
 .swiftpm/
 *.xcodeproj
 *.app
