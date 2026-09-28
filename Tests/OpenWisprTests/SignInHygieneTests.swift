@@ -172,10 +172,15 @@ final class SignInHygieneTests: XCTestCase {
         XCTAssertTrue(statusBar.contains("hasToken: SessionStore().isSignedIn"))
     }
 
-    func testAuthServiceOnlyPutsTheScopeInAQuery() throws {
+    /// Every `URLQueryItem` in `AuthService.swift` must be one of these two fixed,
+    /// non-secret literals: the sign-out scope and the refresh grant type (Task
+    /// 3.5). Never an email, a code or a token: those travel only in a POST body
+    /// or a bearer header, never a query string.
+    func testAuthServiceOnlyPutsFixedNonSecretValuesInAQuery() throws {
         let service = try XCTUnwrap(try sourceFiles().first { $0.name == "AuthService.swift" }).text
-        XCTAssertEqual(service.components(separatedBy: "URLQueryItem(").count - 1, 1)
+        XCTAssertEqual(service.components(separatedBy: "URLQueryItem(").count - 1, 2)
         XCTAssertTrue(service.contains(#"URLQueryItem(name: "scope", value: "local")"#))
+        XCTAssertTrue(service.contains(#"URLQueryItem(name: "grant_type", value: "refresh_token")"#))
         XCTAssertFalse(service.contains("queryItems = ") && service.contains("email") && service.contains("URLQueryItem(name: \"email\""))
     }
 

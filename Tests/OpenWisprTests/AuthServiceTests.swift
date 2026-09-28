@@ -417,6 +417,102 @@ final class AuthServiceTests: XCTestCase {
         assertFails(await task.value, .cancelled)
     }
 
+    // MARK: - refresh: request shape
+
+    private let refreshSession = AuthSession(
+        accessToken: "old-access", refreshToken: "old-refresh",
+        expiresAt: Date(timeIntervalSince1970: 1_790_000_030), email: "person@example.com"
+    )
+
+    func testRefreshShape() async throws {
+        StubURLProtocol.handler = { _ in self.sessionReply(userEmail: nil) }
+        _ = try await makeService().refresh(refreshSession).get()
+
+        let request = try XCTUnwrap(StubURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/auth/v1/token")
+        XCTAssertEqual(request.url?.query, "grant_type=refresh_token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "apikey"), anonKey)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"), "the refresh token travels in the body, not a bearer header")
+
+        let body = try bodyObject()
+        XCTAssertEqual(Set(body.keys), ["refresh_token"])
+        XCTAssertEqual(body["refresh_token"] as? String, "old-refresh")
+    }
+
+    func testNeitherTheOldNorTheNewTokenIsEverInAnyURL() async throws {
+        StubURLProtocol.handler = { _ in self.sessionReply(userEmail: nil) }
+        _ = try await makeService().refresh(refreshSession).get()
+        let url = try XCTUnwrap(StubURLProtocol.lastRequest?.url).absoluteString
+        XCTAssertFalse(url.contains("old-refresh"))
+        XCTAssertFalse(url.contains("abcdefghijkl"), "the new refresh token from sessionReply()")
+    }
+
+    // MARK: - refresh: success
+
+    func testRefreshSuccessBuildsTheNewSessionAndRotatesTheRefreshToken() async throws {
+        StubURLProtocol.handler = { _ in self.sessionReply(userEmail: nil) }
+        let refreshed = try await makeService().refresh(refreshSession).get()
+        XCTAssertEqual(refreshed.accessToken, "header.payload.signature")
+        XCTAssertEqual(refreshed.refreshToken, "abcdefghijkl", "GoTrue rotates the refresh token on every use")
+        XCTAssertEqual(refreshed.expiresAt, Date(timeIntervalSince1970: 1_790_003_600))
+    }
+
+    func testRefreshFallsBackToTheOldSessionsEmailWhenTheReplyHasNone() async throws {
+        StubURLProtocol.handler = { _ in self.sessionReply(userEmail: nil) }
+        let refreshed = try await makeService().refresh(refreshSession).get()
+        XCTAssertEqual(refreshed.email, refreshSession.email)
+    }
+
+    func testRefreshUsesTheReplysEmailWhenItHasOne() async throws {
+        StubURLProtocol.handler = { _ in self.sessionReply(userEmail: "new@example.com") }
+        let refreshed = try await makeService().refresh(refreshSession).get()
+        XCTAssertEqual(refreshed.email, "new@example.com")
+    }
+
+    // MARK: - refresh: a genuinely dead refresh token signs out
+
+    func testARevokedOrReusedOrUnknownRefreshTokenIsSessionRevoked() async {
+        for code in ["refresh_token_not_found", "refresh_token_already_used", "session_not_found", "session_expired"] {
+            StubURLProtocol.handler = { _ in self.gotrueError(400, code) }
+            let result = await makeService().refresh(refreshSession)
+            guard case .failure(.sessionRevoked) = result else { return XCTFail("\(code): \(result)") }
+        }
+    }
+
+    // MARK: - refresh: transient failures never look like a revoked session
+
+    func testAnUnrecognisedRefreshErrorCodeIsNotSessionRevoked() async {
+        StubURLProtocol.handler = { _ in self.gotrueError(400, "something_new_from_supabase") }
+        let result = await makeService().refresh(refreshSession)
+        guard case .failure(.invalidResponse) = result else { return XCTFail("\(result)") }
+    }
+
+    func testARefreshRateLimitIsNotSessionRevoked() async {
+        StubURLProtocol.handler = { _ in self.gotrueError(429, "over_request_rate_limit") }
+        let result = await makeService().refresh(refreshSession)
+        guard case .failure(.tooManyAttempts) = result else { return XCTFail("\(result)") }
+    }
+
+    func testA5xxDuringRefreshIsNotSessionRevoked() async {
+        StubURLProtocol.handler = { _ in .init(status: 503) }
+        let result = await makeService().refresh(refreshSession)
+        guard case .failure(.unavailable) = result else { return XCTFail("\(result)") }
+    }
+
+    func testAnOfflineDeviceDuringRefreshIsNotSessionRevoked() async {
+        StubURLProtocol.handler = { _ in .init(error: URLError(.notConnectedToInternet)) }
+        let result = await makeService().refresh(refreshSession)
+        guard case .failure(.offline) = result else { return XCTFail("\(result)") }
+    }
+
+    func testAnUnusableRefreshReplyIsNotSessionRevoked() async {
+        StubURLProtocol.handler = { _ in .init(body: Data("not json".utf8)) }
+        let result = await makeService().refresh(refreshSession)
+        guard case .failure(.invalidResponse) = result else { return XCTFail("\(result)") }
+    }
+
     // MARK: - signOut
 
     private let session = AuthSession(

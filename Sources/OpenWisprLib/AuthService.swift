@@ -21,10 +21,13 @@ final class AuthService: Sendable {
     private let logoutCap: TimeInterval
 
     /// Production configuration: `AuthConfig` URL and key, and an ephemeral,
-    /// no-redirect, no-cookie session with a 10 s total deadline.
-    convenience init() {
+    /// no-redirect, no-cookie session. `timeout` defaults to 10 s, the budget for
+    /// an interactive sign-in the user is actively waiting on; the token refresh
+    /// path (Task 3.5) passes a much shorter one, since it runs silently before a
+    /// rewrite call and must not itself blow the dictation watchdog.
+    convenience init(timeout: TimeInterval = 10) {
         self.init(
-            session: RewritePipeline.makeSession(configuration: .ephemeral, timeout: 10),
+            session: RewritePipeline.makeSession(configuration: .ephemeral, timeout: timeout),
             baseURL: AuthConfig.url,
             anonKey: AuthConfig.anonKey
         )
@@ -80,6 +83,30 @@ final class AuthService: Sendable {
         }
     }
 
+    /// Refreshes an expiring session (`AuthSession.needsRefresh`) via GoTrue's
+    /// rotating refresh grant. Supabase issues a NEW refresh token on every
+    /// successful call (rotation), so the caller must save the whole returned
+    /// session, not just the access token: sending the old refresh token again
+    /// after that would be rejected as already used.
+    func refresh(_ session: AuthSession) async -> Result<AuthSession, AuthError> {
+        let request = makeRequest(
+            path: "auth/v1/token",
+            query: [URLQueryItem(name: "grant_type", value: "refresh_token")],
+            body: RefreshBody(refresh_token: session.refreshToken)
+        )
+        switch await send(request) {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let reply):
+            guard (200..<300).contains(reply.status) else {
+                return .failure(AuthService.classify(reply, route: .refresh))
+            }
+            // A refresh reply is not required to repeat the user's email; fall
+            // back to the session being refreshed, same as `requestedEmail` above.
+            return AuthService.session(from: reply.body, requestedEmail: session.email, now: now())
+        }
+    }
+
     /// Best-effort server-side sign-out: revokes this session's refresh tokens.
     /// The result is ignored on purpose (the local session is already gone, and a
     /// failed revoke is not something the user can act on), and it is abandoned
@@ -126,8 +153,17 @@ final class AuthService: Sendable {
         let token: String
     }
 
-    private func makeRequest<Body: Encodable>(path: String, body: Body) -> URLRequest {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+    private struct RefreshBody: Encodable {
+        let refresh_token: String
+    }
+
+    private func makeRequest<Body: Encodable>(path: String, query: [URLQueryItem] = [], body: Body) -> URLRequest {
+        var url = baseURL.appendingPathComponent(path)
+        if !query.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.queryItems = query
+            url = components.url ?? url
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -157,7 +193,7 @@ final class AuthService: Sendable {
 
     // MARK: - interpretation
 
-    enum Route { case requestCode, verifyCode }
+    enum Route { case requestCode, verifyCode, refresh }
 
     static func classify(networkError error: Error) -> AuthError {
         if error is CancellationError { return .cancelled }
@@ -180,6 +216,14 @@ final class AuthService: Sendable {
 
     /// Decides from the HTTP status and Supabase's `error_code`. Message text is
     /// never consulted, because it is free text and changes between versions.
+    ///
+    /// On the `refresh` route, only the codes GoTrue uses for a genuinely dead
+    /// refresh token (`refresh_token_not_found`, `refresh_token_already_used`,
+    /// `session_not_found`, `session_expired`) become `.sessionRevoked`. Every
+    /// other 4xx/5xx or network failure on that route (an unrecognised code, a
+    /// rate limit, a 5xx, an unusable body) falls through to a transient error
+    /// case instead, so `refreshingKeychainToken` knows to keep the session and
+    /// try again next time rather than sign the user out over a network blip.
     static func classify(status: Int, errorCode: String?, retryAfter: TimeInterval?, route: Route) -> AuthError {
         let wait = retryAfter ?? AuthError.defaultRetryAfter
         switch status {
@@ -199,6 +243,9 @@ final class AuthService: Sendable {
             case (.verifyCode, "validation_failed") where status == 400 || status == 422: return .codeRejected
             case (.requestCode, "validation_failed") where status == 400 || status == 422: return .invalidEmail
             case (.requestCode, "email_address_invalid") where status == 400 || status == 422: return .invalidEmail
+            case (.refresh, "refresh_token_not_found"), (.refresh, "refresh_token_already_used"),
+                 (.refresh, "session_not_found"), (.refresh, "session_expired"):
+                return .sessionRevoked
             default: return .invalidResponse
             }
         default:

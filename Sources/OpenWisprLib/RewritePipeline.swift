@@ -118,7 +118,7 @@ final class RewritePipeline {
             session: RewritePipeline.makeSession(configuration: .ephemeral, timeout: timeout),
             baseURL: RewritePipeline.proxyBaseURL,
             timeout: timeout,
-            tokenProvider: { RewritePipeline.keychainToken() }
+            tokenProvider: { await RewritePipeline.refreshingKeychainToken() }
         )
     }
 
@@ -158,6 +158,51 @@ final class RewritePipeline {
     static func keychainToken(store: SessionStore = SessionStore()) -> String? {
         guard case .success(let session?) = store.load() else { return nil }
         return session.accessToken
+    }
+
+    /// The stored session's access token, refreshing first (Task 3.5) when
+    /// `AuthSession.needsRefresh` says it is expired or within its 60 s leeway.
+    /// This is what the production `tokenProvider` above actually calls; plain
+    /// `keychainToken` stays as the no-refresh primitive it always was.
+    ///
+    /// - A refresh that succeeds saves the WHOLE new session before returning its
+    ///   access token: Supabase rotates the refresh token on every use, so
+    ///   keeping only the old one would make the next refresh fail as reuse.
+    /// - A refresh that is genuinely rejected (`.sessionRevoked` — GoTrue says
+    ///   this refresh token is dead) clears the stored session, so this returns
+    ///   nil exactly like a plain sign-out: the caller's resulting
+    ///   `.notAuthenticated` is what shows the signed-out notice.
+    /// - Any other refresh failure (offline, timeout, rate limit, 5xx, an
+    ///   unusable reply) is treated as transient: the stored session is left
+    ///   alone and its still-current (if soon to expire) access token is
+    ///   returned, so a network blip never signs the user out.
+    ///
+    /// Nil when signed out or when the Keychain cannot be read right now, same
+    /// as `keychainToken`. `service`'s default uses a short timeout: this runs
+    /// silently before every rewrite call and must not itself consume the
+    /// dictation watchdog's budget.
+    static func refreshingKeychainToken(
+        store: SessionStore = SessionStore(),
+        service: AuthService = AuthService(timeout: 2),
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) async -> String? {
+        guard case .success(let session?) = store.load() else { return nil }
+        guard session.needsRefresh(now: now()) else { return session.accessToken }
+
+        switch await service.refresh(session) {
+        case .success(let refreshed):
+            // Best-effort: a Keychain write failure here leaves the old session
+            // in place (still holding a now-retired refresh token, but a still
+            // valid access token is returned for this one call regardless), and
+            // the next call just tries the refresh again.
+            try? store.save(refreshed)
+            return refreshed.accessToken
+        case .failure(.sessionRevoked):
+            store.clear()
+            return nil
+        case .failure:
+            return session.accessToken
+        }
     }
 
     /// Never throws: every failure is a `RewriteError`. Callers fall back to
