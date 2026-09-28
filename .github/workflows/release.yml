@@ -1,0 +1,57 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build & Release DMG
+    runs-on: macos-15
+    permissions:
+      contents: write
+    # Job-level env, evaluated before any step's `if:`. A step's own `env:`
+    # block (as the old "Notarize DMG" step used) is NOT available to that
+    # same step's `if:` condition — GitHub Actions evaluates `if:` first —
+    # so gating on `env.KEYCHAIN_PROFILE` there was always false regardless
+    # of whether the secret existed, and notarization silently always skipped.
+    env:
+      HAS_NOTARY_PROFILE: ${{ secrets.NOTARY_KEYCHAIN_PROFILE != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.0'
+
+      - name: Build Release Binary
+        run: |
+          swift build -c release
+
+      - name: Bundle App
+        run: |
+          bash scripts/bundle-app.sh .build/release/open-wispr Dictation-WIP.app ${{ github.ref_name }}
+
+      - name: Create DMG
+        run: |
+          bash scripts/create-dmg.sh Dictation-WIP.app Dictation-WIP.dmg
+
+      - name: Notarize DMG
+        if: env.HAS_NOTARY_PROFILE == 'true'
+        env:
+          KEYCHAIN_PROFILE: ${{ secrets.NOTARY_KEYCHAIN_PROFILE }}
+        run: |
+          bash scripts/notarize.sh Dictation-WIP.dmg
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Dictation-WIP.dmg
+            Dictation-WIP.app
+          draft: false
+          prerelease: false
+          generate_release_notes: true

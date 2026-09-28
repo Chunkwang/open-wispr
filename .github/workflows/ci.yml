@@ -26,16 +26,40 @@ jobs:
         if: steps.filter.outputs.swift == 'true'
         run: swift build -c release
 
-      # Rewrite consent may only be granted by the disclosure sheet (Task 5.1).
-      # Until then a release binary must contain no code that writes it.
-      - name: Release binary cannot grant rewrite consent
+      # Task 5.1: Privacy Disclosure Sheet is now active in release builds, so
+      # RewriteConsent.recordAcceptance() and its disclosure text are SUPPOSED
+      # to be reachable here — do not add checks for those.
+      #
+      # What's still dev-only and must never leak into a release binary:
+      #   - the DEBUG-only test hook OPENWISPR_AGENT_LAYER (Config.swift).
+      #     recordTextAcceptance()/recordImageAcceptance() (v2 Edit/Ask consent)
+      #     are NOT checked here: Swift keeps those symbols regardless of the
+      #     `#if DEBUG` at the call site, so `nm`/`strings` can't see the gate.
+      #     That's enforced instead by the source-scan XCTests in
+      #     ContextConsentGateTests.swift, which run in the unit-tests job.
+      #
+      # Add new DEBUG-only strings here as they're introduced — this list is
+      # exactly the kind of thing that silently stops covering a new feature
+      # if it isn't extended (that's how the previous gap happened).
+      - name: Verify release build succeeds
+        if: steps.filter.outputs.swift == 'true'
+        run: |
+          test -f .build/release/open-wispr
+
+      - name: DEBUG-only strings must not appear in the release binary
         if: steps.filter.outputs.swift == 'true'
         run: |
           BIN=.build/release/open-wispr
-          SYMBOLS=$(nm "$BIN" | grep -c recordAcceptance || true)
-          STRINGS=$(strings "$BIN" | grep -ci 'rewrite consent' || true)
-          echo "recordAcceptance symbols: $SYMBOLS, dev consent strings: $STRINGS"
-          test "$SYMBOLS" = "0" && test "$STRINGS" = "0"
+          FAIL=0
+          for needle in "OPENWISPR_AGENT_LAYER"; do
+            if strings "$BIN" | grep -qF -- "$needle"; then
+              echo "FAIL: found '$needle' in release binary $BIN"
+              FAIL=1
+            else
+              echo "OK: '$needle' not present in release binary"
+            fi
+          done
+          exit $FAIL
 
   worker-config-guard:
     runs-on: ubuntu-latest
@@ -76,6 +100,10 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Contract tests for the local mock auth server (node:test, no accounts or keys).
+      - name: Mock Supabase tests
+        run: npm run test:mock
 
   unit-tests:
     runs-on: macos-15

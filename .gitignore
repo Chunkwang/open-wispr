@@ -2,6 +2,8 @@
 .swiftpm/
 *.xcodeproj
 *.app
+*.dmg
+build.log
 .DS_Store
 .beads
 .claude/ralph-loop.local.md
