@@ -466,6 +466,40 @@ final class ConfigTests: XCTestCase {
         let data = try JSONEncoder().encode(config)
         XCTAssertTrue(try Config.decode(from: data).isAgentLayerEnabled)
     }
+
+    // MARK: - onDeviceAIEnabled (Foundation Models Phase 1)
+
+    func testOldConfigWithoutOnDeviceAIEnabledDefaultsOff() throws {
+        // An old config.json predates this key entirely: it must load, and the
+        // flag must default to false/nil, matching CLAUDE.md's "ships off" rule.
+        let config = try decodeConfig(rewriteModeJSON: nil)
+        XCTAssertNil(config.onDeviceAIEnabled)
+    }
+
+    func testOnDeviceAIEnabledDefaultsFalseWhenAbsent() {
+        XCTAssertNil(Config.defaultConfig.onDeviceAIEnabled)
+    }
+
+    func testOnDeviceAIEnabledDecodesTrue() throws {
+        let json = """
+        {
+            "hotkey": {"keyCode": 96, "modifiers": []},
+            "modelSize": "small.en",
+            "language": "fr",
+            "maxRecordings": 7,
+            "onDeviceAIEnabled": true
+        }
+        """.data(using: .utf8)!
+        let config = try Config.decode(from: json)
+        XCTAssertEqual(config.onDeviceAIEnabled?.value, true)
+    }
+
+    func testOnDeviceAIEnabledRoundTrips() throws {
+        var config = Config.defaultConfig
+        config.onDeviceAIEnabled = FlexBool(true)
+        let data = try JSONEncoder().encode(config)
+        XCTAssertEqual(try Config.decode(from: data).onDeviceAIEnabled?.value, true)
+    }
 }
 
 private struct FlexBoolWrapper: Codable {

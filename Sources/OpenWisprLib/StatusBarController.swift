@@ -396,6 +396,45 @@ class StatusBarController: NSObject {
         rewriteStatusItem.isEnabled = false
         menu.addItem(rewriteStatusItem)
 
+        // On-device Apple Intelligence (Foundation Models), Phase 1: DEBUG-only so
+        // the founder can try it today ahead of a real settings toggle. Never
+        // compiled into a release build — the whole block is `#if DEBUG`, so
+        // nothing here (the toggle, its title string, or the status line) reaches
+        // a release binary at all (verified: `strings` on `swift build -c release`
+        // output finds none of it).
+        #if DEBUG
+        let onDeviceTarget = MenuItemTarget { [weak self] in
+            var cfg = Config.load()
+            let next = !(cfg.onDeviceAIEnabled?.value ?? false)
+            cfg.onDeviceAIEnabled = FlexBool(next)
+            try? cfg.save()
+            self?.onConfigChange?(cfg)
+            self?.buildMenu()
+        }
+        menuItemTargets.append(onDeviceTarget)
+        let onDeviceItem = NSMenuItem(
+            title: "[DEBUG] On-Device AI (Apple Intelligence)",
+            action: #selector(MenuItemTarget.invoke),
+            keyEquivalent: ""
+        )
+        onDeviceItem.target = onDeviceTarget
+        onDeviceItem.state = (config.onDeviceAIEnabled?.value ?? false) ? .on : .off
+        menu.addItem(onDeviceItem)
+
+        let onDeviceReason = FoundationModelsPipeline.unavailableReason
+        let onDeviceStatusText: String
+        if config.onDeviceAIEnabled?.value != true {
+            onDeviceStatusText = "[DEBUG] On-Device AI: off"
+        } else if let onDeviceReason {
+            onDeviceStatusText = "[DEBUG] On-Device AI: unavailable (\(onDeviceReason))"
+        } else {
+            onDeviceStatusText = "[DEBUG] On-Device AI: on"
+        }
+        let onDeviceStatusItem = NSMenuItem(title: onDeviceStatusText, action: nil, keyEquivalent: "")
+        onDeviceStatusItem.isEnabled = false
+        menu.addItem(onDeviceStatusItem)
+        #endif
+
         // Revoke rewrite consent (always available if consent was granted)
         let rewriteConsentGranted = RewriteConsent.shared.hasConsent
         if rewriteConsentGranted {

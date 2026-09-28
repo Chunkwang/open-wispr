@@ -30,6 +30,15 @@ public struct Config: Codable {
     public var localLLMEnabled: FlexBool?
     public var localLLMURL: String?
     public var localLLMModel: String?
+    /// Off unless config.json explicitly sets it. Gates `FoundationModelsPipeline`
+    /// (Apple's on-device Foundation Models framework, macOS 26+) as a rewrite
+    /// pipeline. Absent in old configs, so an old config.json keeps this off,
+    /// matching the same "ships off" rule as `localLLMEnabled`/`agentLayerEnabled`.
+    /// Even when true, `RewriteGate`/`RewriteCoordinator` only use it when
+    /// `FoundationModelsPipeline.isAvailable` is also true (real device/Apple
+    /// Intelligence eligibility) — this flag alone never forces the on-device
+    /// path over a graceful fallback.
+    public var onDeviceAIEnabled: FlexBool?
     public var translateToEnglish: FlexBool?
     /// Off unless a config.json explicitly sets it. Gates the v2 agent-layer
     /// surfaces (Edit and Ask context/screen awareness) independently of, and
@@ -91,6 +100,7 @@ public struct Config: Codable {
         case localLLMEnabled
         case localLLMURL
         case localLLMModel
+        case onDeviceAIEnabled
         case translateToEnglish
         case agentLayerEnabled
     }
@@ -124,6 +134,7 @@ public struct Config: Codable {
         self.localLLMEnabled = try c.decodeIfPresent(FlexBool.self, forKey: .localLLMEnabled)
         self.localLLMURL = try c.decodeIfPresent(String.self, forKey: .localLLMURL)
         self.localLLMModel = try c.decodeIfPresent(String.self, forKey: .localLLMModel)
+        self.onDeviceAIEnabled = try c.decodeIfPresent(FlexBool.self, forKey: .onDeviceAIEnabled)
         self.translateToEnglish = try c.decodeIfPresent(FlexBool.self, forKey: .translateToEnglish)
         self.agentLayerEnabled = try c.decodeIfPresent(FlexBool.self, forKey: .agentLayerEnabled)
     }
@@ -148,6 +159,7 @@ public struct Config: Codable {
         try c.encodeIfPresent(localLLMEnabled, forKey: .localLLMEnabled)
         try c.encodeIfPresent(localLLMURL, forKey: .localLLMURL)
         try c.encodeIfPresent(localLLMModel, forKey: .localLLMModel)
+        try c.encodeIfPresent(onDeviceAIEnabled, forKey: .onDeviceAIEnabled)
         try c.encodeIfPresent(translateToEnglish, forKey: .translateToEnglish)
         try c.encodeIfPresent(agentLayerEnabled, forKey: .agentLayerEnabled)
     }
@@ -169,6 +181,7 @@ public struct Config: Codable {
         localLLMEnabled: FlexBool? = nil,
         localLLMURL: String? = nil,
         localLLMModel: String? = nil,
+        onDeviceAIEnabled: FlexBool? = nil,
         translateToEnglish: FlexBool? = nil,
         agentLayerEnabled: FlexBool? = nil
     ) {
@@ -190,6 +203,7 @@ public struct Config: Codable {
         self.localLLMEnabled = localLLMEnabled
         self.localLLMURL = localLLMURL
         self.localLLMModel = localLLMModel
+        self.onDeviceAIEnabled = onDeviceAIEnabled
         self.translateToEnglish = translateToEnglish
         self.agentLayerEnabled = agentLayerEnabled
     }

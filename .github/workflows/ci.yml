@@ -38,6 +38,12 @@ jobs:
       #     That's enforced instead by the source-scan XCTests in
       #     ContextConsentGateTests.swift, which run in the unit-tests job.
       #
+      #   - the DEBUG-only On-Device AI (Foundation Models Phase 1) menu block in
+      #     StatusBarController.swift: its whole toggle + status line is inside
+      #     one `#if DEBUG`, so (unlike recordTextAcceptance/recordImageAcceptance
+      #     above) `strings` genuinely can see the gate here — a plain UI string
+      #     literal, unlike a method symbol, really is compiled out with the block.
+      #
       # Add new DEBUG-only strings here as they're introduced — this list is
       # exactly the kind of thing that silently stops covering a new feature
       # if it isn't extended (that's how the previous gap happened).
@@ -51,7 +57,7 @@ jobs:
         run: |
           BIN=.build/release/open-wispr
           FAIL=0
-          for needle in "OPENWISPR_AGENT_LAYER"; do
+          for needle in "OPENWISPR_AGENT_LAYER" "[DEBUG] On-Device AI"; do
             if strings "$BIN" | grep -qF -- "$needle"; then
               echo "FAIL: found '$needle' in release binary $BIN"
               FAIL=1

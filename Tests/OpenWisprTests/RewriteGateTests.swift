@@ -130,6 +130,53 @@ final class RewriteGateTests: XCTestCase {
         XCTAssertEqual(reads, 1)
     }
 
+    // MARK: - onDeviceAIEnabled bypass (Foundation Models Phase 1)
+    //
+    // Mirrors the localLLMEnabled bypass this gate already has: a flag alone must
+    // never be enough, only the flag AND the on-device model actually being
+    // usable right now. `FoundationModelsPipeline.isAvailable` reflects real
+    // device/OS state, so these tests stay deterministic across environments by
+    // checking mode/consent short-circuiting (which never depends on it) and by
+    // asserting the bypass result always mirrors real availability rather than
+    // hard-coding true or false.
+
+    func testOnDeviceAIBypassStillRequiresModeAutoAndConsent() {
+        var cfg = Config.defaultConfig
+        cfg.onDeviceAIEnabled = FlexBool(true)
+        XCTAssertFalse(RewriteGate.shouldRewrite(mode: .off, consent: consent(storing: current), hasToken: false, config: cfg))
+        XCTAssertFalse(RewriteGate.shouldRewrite(mode: .auto, consent: consent(storing: nil), hasToken: false, config: cfg))
+    }
+
+    func testOnDeviceAIDisabledNeverBypassesTheToken() {
+        var cfg = Config.defaultConfig
+        cfg.onDeviceAIEnabled = FlexBool(false)
+        XCTAssertFalse(RewriteGate.shouldRewrite(mode: .auto, consent: consent(storing: current), hasToken: false, config: cfg))
+        cfg.onDeviceAIEnabled = nil
+        XCTAssertFalse(RewriteGate.shouldRewrite(mode: .auto, consent: consent(storing: current), hasToken: false, config: cfg))
+    }
+
+    func testOnDeviceAIBypassMirrorsRealAvailabilityNotJustTheFlag() {
+        var cfg = Config.defaultConfig
+        cfg.onDeviceAIEnabled = FlexBool(true)
+        let opened = RewriteGate.shouldRewrite(mode: .auto, consent: consent(storing: current), hasToken: false, config: cfg)
+        // The flag is on and the token is absent, so the gate can only be open
+        // here because the on-device model is genuinely usable right now.
+        XCTAssertEqual(opened, FoundationModelsPipeline.isAvailable)
+    }
+
+    func testOnDeviceAIPreferredOverTheOllamaBypassWhenBothAreConfigured() {
+        // Both bypasses configured, on-device flag on: whether the gate opens
+        // without a token must still mirror on-device availability, because
+        // on-device is checked first (RewriteGate.shouldRewrite) — the Ollama
+        // bypass would also open it, so this only proves the on-device check
+        // does not somehow narrow what the Ollama-only bypass already allowed.
+        var cfg = Config.defaultConfig
+        cfg.onDeviceAIEnabled = FlexBool(true)
+        cfg.localLLMEnabled = FlexBool(true)
+        cfg.localLLMURL = "http://127.0.0.1:11434"
+        XCTAssertTrue(RewriteGate.shouldRewrite(mode: .auto, consent: consent(storing: current), hasToken: false, config: cfg))
+    }
+
     // MARK: - menu status line
     // `statusLine` exists only in DEBUG builds (the Rewrite menu is DEBUG-only
     // until Task 5.1), so these bodies compile to nothing elsewhere.

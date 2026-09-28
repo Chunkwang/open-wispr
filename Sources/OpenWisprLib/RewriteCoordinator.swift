@@ -79,8 +79,21 @@ final class RewriteCoordinator {
     }
 
     /// The only place a `RewritePipeline` is constructed (a test enforces this).
+    ///
+    /// Preference order when more than one on-device option is enabled: on-device
+    /// Apple Intelligence (`FoundationModelsPipeline`) first — it costs 0 extra app
+    /// size and needs 0 separate install, unlike Ollama, which needs a server the
+    /// user runs themselves — then Ollama (`LocalLLMPipeline`), then the cloud
+    /// pipeline, then (outside this function, in `RewriteCoordinator.outcome`) the
+    /// raw transcript on total failure. `onDeviceAIEnabled` alone is not enough:
+    /// `FoundationModelsPipeline.isAvailable` must also be true, so a Mac where
+    /// Apple Intelligence is off falls through to Ollama or the cloud pipeline
+    /// instead of silently failing.
     static func pipelineRewriter(timeout: TimeInterval) -> Rewriter {
         let config = Config.load()
+        if config.onDeviceAIEnabled?.value == true, FoundationModelsPipeline.isAvailable {
+            return { await FoundationModelsPipeline.rewrite(transcript: $0, timeout: timeout) }
+        }
         if config.localLLMEnabled?.value == true,
            let url = LocalLLMPipeline.validatedURL(from: config.localLLMURL) {
             let model = config.localLLMModel ?? LocalLLMPipeline.defaultModel

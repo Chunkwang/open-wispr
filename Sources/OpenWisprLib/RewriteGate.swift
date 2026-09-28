@@ -64,9 +64,19 @@ public enum RewriteGate {
     ) -> Bool {
         guard mode == .auto else { return false }
         guard consent.hasConsent else { return false }
-        if let config = config, config.localLLMEnabled?.value == true,
-           LocalLLMPipeline.validatedURL(from: config.localLLMURL) != nil {
-            return true
+        if let config = config {
+            // Preferred first: costs 0 extra app size and needs 0 separate
+            // install, unlike the Ollama bypass below. Only a genuine bypass when
+            // the on-device model is actually usable right now — an enabled flag
+            // on a Mac where Apple Intelligence is off must fall through to the
+            // next check, not silently open the gate.
+            if config.onDeviceAIEnabled?.value == true, FoundationModelsPipeline.isAvailable {
+                return true
+            }
+            if config.localLLMEnabled?.value == true,
+               LocalLLMPipeline.validatedURL(from: config.localLLMURL) != nil {
+                return true
+            }
         }
         return hasToken()
     }
