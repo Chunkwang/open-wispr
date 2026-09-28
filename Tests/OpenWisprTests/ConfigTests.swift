@@ -431,6 +431,41 @@ final class ConfigTests: XCTestCase {
         let data = try JSONEncoder().encode(config)
         XCTAssertEqual(try Config.decode(from: data).rewriteMode, .auto)
     }
+
+    // MARK: - agentLayerEnabled (Day 3 hardening, finding 5)
+
+    func testOldConfigWithoutAgentLayerEnabledDefaultsOff() throws {
+        // An old config.json predates this key entirely: it must load, and the
+        // flag must default to false, matching CLAUDE.md's "ships off" rule.
+        let config = try decodeConfig(rewriteModeJSON: nil)
+        XCTAssertNil(config.agentLayerEnabled)
+        XCTAssertFalse(config.isAgentLayerEnabled)
+    }
+
+    func testAgentLayerEnabledDecodesTrue() throws {
+        let json = """
+        {
+            "hotkey": {"keyCode": 96, "modifiers": []},
+            "modelSize": "small.en",
+            "language": "fr",
+            "maxRecordings": 7,
+            "agentLayerEnabled": true
+        }
+        """.data(using: .utf8)!
+        let config = try Config.decode(from: json)
+        XCTAssertTrue(config.isAgentLayerEnabled)
+    }
+
+    func testAgentLayerEnabledDefaultsFalseWhenAbsent() {
+        XCTAssertFalse(Config.defaultConfig.isAgentLayerEnabled)
+    }
+
+    func testAgentLayerEnabledRoundTrips() throws {
+        var config = Config.defaultConfig
+        config.agentLayerEnabled = FlexBool(true)
+        let data = try JSONEncoder().encode(config)
+        XCTAssertTrue(try Config.decode(from: data).isAgentLayerEnabled)
+    }
 }
 
 private struct FlexBoolWrapper: Codable {

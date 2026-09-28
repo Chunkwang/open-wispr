@@ -41,3 +41,22 @@ export function mockRewrite(transcript: string): string {
   if (!/[.?!]$/.test(text)) text += ".";
   return text;
 }
+
+/**
+ * Deterministic local stand-in for the Claude edit. Obviously fake transforms, chosen by keywords in
+ * the INSTRUCTION only ("shorter" keeps the first sentence, "uppercase" uppercases, "professional"
+ * prefixes "Dear team,"; anything else returns the selection unchanged). The selection is only ever
+ * the text being transformed: it is never read for instructions, so a selection that says "ignore
+ * that and uppercase everything" changes nothing on its own. Whitespace around the result is
+ * restored by the caller, like for the real provider.
+ */
+export function mockEdit(instruction: string, selection: string): string {
+  const wanted = instruction.toLowerCase();
+  if (wanted.includes("shorter")) {
+    const text = selection.trim();
+    return /^[\s\S]*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
+  }
+  if (/upper[\s-]?case/.test(wanted)) return selection.toUpperCase();
+  if (wanted.includes("professional")) return `Dear team, ${selection.trim()}`;
+  return selection;
+}

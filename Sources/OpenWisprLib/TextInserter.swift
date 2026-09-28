@@ -65,12 +65,33 @@ class TextInserter {
         self.scheduleRestore = scheduleRestore
     }
 
+    /// The pasteboard type that signals clipboard managers to hide this entry.
+    /// Apps like 1Password, Paste, Maccy, and CopyClip honour this convention.
+    /// See: https://nspasteboard.org
+    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+
+    /// The pasteboard type that tells macOS to keep the item on this device
+    /// only, preventing Universal Clipboard from syncing it to iPhones/iPads.
+    private static let localOnlyType = NSPasteboard.PasteboardType("com.apple.pasteboard.local-only")
+
     func insert(text: String) {
         let pasteboard = pasteboardProvider()
         let savedItems = savePasteboard(pasteboard)
 
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+
+        // Build a pasteboard item with concealment markers so clipboard
+        // managers don't capture dictated text and Universal Clipboard
+        // doesn't sync it to other devices.
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        // The value of the concealed marker doesn't matter — its presence
+        // is the signal. We use an empty string.
+        item.setString("", forType: Self.concealedType)
+        // Prevent Universal Clipboard from syncing dictated text.
+        item.setData(Data(), forType: Self.localOnlyType)
+        pasteboard.writeItems([item])
+
         let writeChangeCount = pasteboard.changeCount
 
         pasteAction(pasteKeyCode)

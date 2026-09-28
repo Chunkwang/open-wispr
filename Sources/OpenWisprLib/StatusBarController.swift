@@ -14,9 +14,16 @@ class StatusBarController: NSObject {
     private var downloadProgress: String?
     private var downloadPercent: Double = 0
     private var copiedFeedback = false
+    private var copiedBeforeAfterFeedback = false
     private var noticeGeneration = 0
     private var menuItemTargets: [MenuItemTarget] = []
     private var stateMenuItem: NSMenuItem?
+    // The two sign-in items live for the whole life of the menu, so they can be
+    // refreshed when it opens without changing its structure.
+    private var signInItem: NSMenuItem?
+    private var signOutItem: NSMenuItem?
+    private var signInTarget: MenuItemTarget?
+    private var signOutTarget: MenuItemTarget?
 
     var reprocessHandler: ((URL) -> Void)?
     var onConfigChange: ((Config) -> Void)?
@@ -48,6 +55,11 @@ class StatusBarController: NSObject {
             button.image?.isTemplate = true
         }
 
+        // A saved sign-in changes the menu at once, while the window is still open.
+        Task { @MainActor [weak self] in
+            SignInWindowController.shared.sessionDidChange = { self?.buildMenu() }
+        }
+
         buildMenu()
     }
 
@@ -61,6 +73,21 @@ class StatusBarController: NSObject {
         buildMenu()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.copiedFeedback = false
+            self?.buildMenu()
+        }
+    }
+
+    @objc func copyLastBeforeAfter() {
+        guard let delegate = NSApplication.shared.delegate as? AppDelegate,
+              let pair = delegate.lastRewritePair else { return }
+        let formatted = Copy.formatBeforeAfter(raw: pair.raw, rewritten: pair.rewritten)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(formatted, forType: .string)
+        copiedBeforeAfterFeedback = true
+        buildMenu()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.copiedBeforeAfterFeedback = false
             self?.buildMenu()
         }
     }
@@ -188,6 +215,19 @@ class StatusBarController: NSObject {
         langItem.submenu = langSubmenu
         menu.addItem(langItem)
 
+        let translateTarget = MenuItemTarget { [weak self] in
+            var cfg = Config.load()
+            let current = cfg.translateToEnglish?.value ?? false
+            cfg.translateToEnglish = FlexBool(!current)
+            try? cfg.save()
+            self?.onConfigChange?(cfg)
+        }
+        menuItemTargets.append(translateTarget)
+        let translateItem = NSMenuItem(title: "Translate Foreign Speech to English", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+        translateItem.target = translateTarget
+        translateItem.state = (config.translateToEnglish?.value ?? false) ? .on : .off
+        menu.addItem(translateItem)
+
         let modelItem = NSMenuItem(title: "Model: \(config.modelSize)", action: nil, keyEquivalent: "")
         let modelSubmenu = NSMenu()
 
@@ -305,15 +345,38 @@ class StatusBarController: NSObject {
         toggleItem.state = (config.toggleMode?.value ?? false) ? .on : .off
         menu.addItem(toggleItem)
 
-        #if DEBUG
-        // Rewrite is hidden from release builds until the disclosure sheet
-        // (Task 5.1) exists: without it there is no way to obtain consent, so a
-        // release menu offering the toggle would be a switch that cannot work.
+
+        // Rewrite toggle — shows disclosure sheet if consent not yet granted
         let rewriteTarget = MenuItemTarget { [weak self] in
             var cfg = Config.load()
-            cfg.rewriteMode = cfg.rewriteMode == .auto ? .off : .auto
-            try? cfg.save()
-            self?.onConfigChange?(cfg)
+            if cfg.rewriteMode == .auto {
+                // Turning off — always allowed
+                cfg.rewriteMode = .off
+                try? cfg.save()
+                self?.onConfigChange?(cfg)
+            } else {
+                // Turning on — show disclosure sheet if consent not yet granted
+                if RewriteConsent.shared.hasConsent {
+                    cfg.rewriteMode = .auto
+                    try? cfg.save()
+                    self?.onConfigChange?(cfg)
+                } else {
+                    RewriteDisclosureWindowController.present { accepted in
+                        if accepted {
+                            var cfg2 = Config.load()
+                            cfg2.rewriteMode = .auto
+                            try? cfg2.save()
+                            DispatchQueue.main.async {
+                                self?.onConfigChange?(cfg2)
+                            }
+                        } else {
+                            DispatchQueue.main.async {
+                                self?.buildMenu()
+                            }
+                        }
+                    }
+                }
+            }
         }
         menuItemTargets.append(rewriteTarget)
         let rewriteItem = NSMenuItem(title: "Rewrite", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
@@ -325,7 +388,7 @@ class StatusBarController: NSObject {
             title: RewriteGate.statusLine(
                 mode: config.rewriteMode,
                 consent: .shared,
-                hasToken: RewritePipeline.keychainToken() != nil
+                hasToken: SessionStore().isSignedIn
             ),
             action: nil,
             keyEquivalent: ""
@@ -333,58 +396,100 @@ class StatusBarController: NSObject {
         rewriteStatusItem.isEnabled = false
         menu.addItem(rewriteStatusItem)
 
-        // Dev-only stand-ins for the disclosure sheet and sign-in (Tasks 5.1 and
-        // Stage 3). Compiled out of release builds, which therefore have no way
-        // to record consent or store a token.
-        let consentGranted = RewriteConsent.shared.hasConsent
-        let consentTarget = MenuItemTarget { [weak self] in
-            if consentGranted {
+        // Revoke rewrite consent (always available if consent was granted)
+        let rewriteConsentGranted = RewriteConsent.shared.hasConsent
+        if rewriteConsentGranted {
+            let revokeTarget = MenuItemTarget { [weak self] in
                 RewriteConsent.shared.revoke()
-            } else {
-                RewriteConsent.shared.recordAcceptance()
+                self?.buildMenu()
             }
-            self?.buildMenu()
+            menuItemTargets.append(revokeTarget)
+            let revokeItem = NSMenuItem(
+                title: "Revoke rewrite consent",
+                action: #selector(MenuItemTarget.invoke),
+                keyEquivalent: ""
+            )
+            revokeItem.target = revokeTarget
+            menu.addItem(revokeItem)
         }
-        menuItemTargets.append(consentTarget)
-        let consentItem = NSMenuItem(
-            title: consentGranted ? "Revoke rewrite consent (dev)" : "Grant rewrite consent (dev)",
+
+        // Context consent (Edit & Ask features)
+        let contextConsentGranted = ContextConsent.shared.hasTextConsent
+        let contextConsentTarget = MenuItemTarget { [weak self] in
+            if contextConsentGranted {
+                ContextConsent.shared.revokeTextConsent()
+                ContextConsent.shared.revokeImageConsent()
+                self?.buildMenu()
+            } else {
+                ContextConsentWindowController.present { accepted in
+                    DispatchQueue.main.async {
+                        self?.buildMenu()
+                    }
+                }
+            }
+        }
+        menuItemTargets.append(contextConsentTarget)
+        let contextConsentItem = NSMenuItem(
+            title: contextConsentGranted ? "Revoke context consent" : "Enable screen context…",
             action: #selector(MenuItemTarget.invoke),
             keyEquivalent: ""
         )
-        consentItem.target = consentTarget
-        menu.addItem(consentItem)
+        contextConsentItem.target = contextConsentTarget
+        menu.addItem(contextConsentItem)
 
-        let pasteTokenTarget = MenuItemTarget { [weak self] in
-            // The token is never printed or logged.
-            if let token = NSPasteboard.general.string(forType: .string)?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
-                Keychain.set(token, account: RewritePipeline.authAccount)
+        // Sign-in (docs/design/sign-in.md, section 9): "Sign in…", or a disabled
+        // "Signed in as <email>" plus "Sign out". Both items always exist; which
+        // one shows, and how, is decided by `applySignInMenu` on every rebuild and
+        // whenever the menu opens.
+        let signInTarget = MenuItemTarget {
+            Task { @MainActor in SignInWindowController.shared.show() }
+        }
+        let signOutTarget = MenuItemTarget { [weak self] in self?.signOutFromMenu() }
+        self.signInTarget = signInTarget
+        self.signOutTarget = signOutTarget
+        let signInItem = NSMenuItem(title: SignInCopy.menuSignIn, action: nil, keyEquivalent: "")
+        let signOutItem = NSMenuItem(title: SignInCopy.menuSignOut, action: nil, keyEquivalent: "")
+        self.signInItem = signInItem
+        self.signOutItem = signOutItem
+        menu.addItem(signInItem)
+        menu.addItem(signOutItem)
+        menu.delegate = self
+        applySignInMenu()
+
+        // Task 7.6: Invite someone referral menu item
+        if SessionStore().isSignedIn {
+            let inviteTarget = MenuItemTarget { [weak self] in
+                let inviteUrl = "https://openwispr.com/invite"
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(inviteUrl, forType: .string)
+                self?.showNotice(Copy.referralCopiedLink, for: 3)
             }
-            self?.buildMenu()
+            menuItemTargets.append(inviteTarget)
+            let inviteItem = NSMenuItem(title: Copy.referralMenuInvite, action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+            inviteItem.target = inviteTarget
+            menu.addItem(inviteItem)
         }
-        menuItemTargets.append(pasteTokenTarget)
-        let pasteTokenItem = NSMenuItem(title: "Paste dev session token from clipboard", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
-        pasteTokenItem.target = pasteTokenTarget
-        menu.addItem(pasteTokenItem)
-
-        let clearTokenTarget = MenuItemTarget { [weak self] in
-            Keychain.delete(account: RewritePipeline.authAccount)
-            self?.buildMenu()
-        }
-        menuItemTargets.append(clearTokenTarget)
-        let clearTokenItem = NSMenuItem(title: "Clear dev session token", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
-        clearTokenItem.target = clearTokenTarget
-        menu.addItem(clearTokenItem)
-        #endif
 
         menu.addItem(NSMenuItem.separator())
 
         let lastText = (NSApplication.shared.delegate as? AppDelegate)?.lastTranscription
-        let copyTitle = copiedFeedback ? "Copied!" : "Copy Last Dictation"
+        let copyTitle = copiedFeedback ? "Copied!" : Copy.menuCopyLast
         let copyItem = NSMenuItem(title: copyTitle, action: lastText != nil && !copiedFeedback ? #selector(copyLastTranscription) : nil, keyEquivalent: "c")
         copyItem.target = self
         if lastText == nil || copiedFeedback { copyItem.isEnabled = copiedFeedback }
         menu.addItem(copyItem)
+
+        // Task 7.2: Copy before/after snippet menu item
+        let lastPair = (NSApplication.shared.delegate as? AppDelegate)?.lastRewritePair
+        let copyBeforeAfterTitle = copiedBeforeAfterFeedback ? Copy.menuCopiedBeforeAfter : Copy.menuCopyBeforeAfter
+        let copyBeforeAfterItem = NSMenuItem(
+            title: copyBeforeAfterTitle,
+            action: lastPair != nil && !copiedBeforeAfterFeedback ? #selector(copyLastBeforeAfter) : nil,
+            keyEquivalent: ""
+        )
+        copyBeforeAfterItem.target = self
+        if lastPair == nil || copiedBeforeAfterFeedback { copyBeforeAfterItem.isEnabled = copiedBeforeAfterFeedback }
+        menu.addItem(copyBeforeAfterItem)
 
         if Config.effectiveMaxRecordings(config.maxRecordings) > 0 {
             let recordings = RecordingStore.listRecordings()
@@ -423,10 +528,18 @@ class StatusBarController: NSObject {
         openItem.target = self
         menu.addItem(openItem)
 
+        let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: Copy.menuQuit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem.menu = menu
+    }
+
+    @objc private func checkForUpdates() {
+        UpdaterController.shared.checkForUpdates()
     }
 
     @objc private func reloadConfiguration() {
@@ -763,5 +876,58 @@ class StatusBarController: NSObject {
         }
         image.isTemplate = true
         return image
+    }
+}
+
+extension StatusBarController: NSMenuDelegate {
+    /// Re-reads the session every time the menu opens, so a Keychain that was
+    /// locked at the last rebuild, or a sign-in from another launch, shows up.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        applySignInMenu()
+    }
+
+    func applySignInMenu() {
+        guard let signInItem = signInItem, let signOutItem = signOutItem,
+              let signInTarget = signInTarget, let signOutTarget = signOutTarget else { return }
+
+        func enable(_ item: NSMenuItem, _ target: MenuItemTarget) {
+            item.target = target
+            item.action = #selector(MenuItemTarget.invoke)
+        }
+        func disable(_ item: NSMenuItem) {
+            item.target = nil
+            item.action = nil
+        }
+
+        signInItem.toolTip = nil
+        switch SignInMenuState(SessionStore().load()) {
+        case .signedOut:
+            signInItem.title = SignInCopy.menuSignIn
+            enable(signInItem, signInTarget)
+            signOutItem.isHidden = true
+        case .signedIn(let email):
+            signInItem.title = SignInCopy.menuSignedInAs(email)
+            signInItem.toolTip = email
+            disable(signInItem)
+            signOutItem.isHidden = false
+            enable(signOutItem, signOutTarget)
+        case .unavailable:
+            // The Keychain cannot be read right now: do not claim signed out.
+            signInItem.title = SignInCopy.menuSignInUnavailable
+            disable(signInItem)
+            signOutItem.isHidden = true
+        }
+    }
+
+    /// Signs out, then says what really happened. The token is gone only if the
+    /// local clear worked; if it did not, the menu still shows the user as signed
+    /// in and the notice says so.
+    func signOutFromMenu() {
+        guard let coordinator = (NSApp.delegate as? AppDelegate)?.authCoordinator else { return }
+        let feedback = SignOutFeedback(local: coordinator.signOut().local)
+        showNotice(feedback.notice)
+        if let announcement = feedback.announcement {
+            SignInAnnouncer.post(announcement, priority: .medium)
+        }
     }
 }

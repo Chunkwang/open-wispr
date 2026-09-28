@@ -15,15 +15,48 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     /// Owns the rewrite decision. Built on the main thread at launch (it creates
     /// no network object until a dictation passes the gate).
     private var rewriteCoordinator: RewriteCoordinator!
+    private var editCoordinator: EditCoordinator!
+    private var askCoordinator: AskCoordinator!
+    
+    enum RecordingMode { case dictate, edit, ask }
+    private var currentRecordingMode: RecordingMode = .dictate
+    
+    private var editHotkeyManager: HotkeyManager?
+    private var askHotkeyManager: HotkeyManager?
+    /// Sign-in hooks for the sign-in window and menu. Signing in or out lifts the
+    /// rewrite coordinator's session-long stop. Main thread only.
+    private(set) var authCoordinator: AuthCoordinator!
     /// Owns when, and whether, each finished dictation is pasted. Main thread only.
     private var sequencer: DictationSequencer!
+    /// The most recent (raw, rewritten) dictation pair in memory (Task 7.1).
+    /// Never written to disk; dropped when the app quits.
+    private(set) var lastRewritePair: (raw: String, rewritten: String)?
+    /// True while a finished dictation is waiting to be pasted or being pasted.
+    /// The sign-in window checks it before touching the pasteboard.
+    var isDictationInsertInFlight: Bool { (sequencer?.pendingCount ?? 0) > 0 }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         statusBar = StatusBarController()
         recorder = AudioRecorder()
-        rewriteCoordinator = RewriteCoordinator.production()
+        // `config` is nil until `setupInner()` loads it (it runs after this, on a
+        // background queue), and these coordinators are not used before then, so
+        // the closures below just read whatever is current at call time. Without
+        // a real config, the gates never see `agentLayerEnabled` or
+        // `localLLMEnabled`, silently disabling both no matter what config.json says.
+        rewriteCoordinator = RewriteCoordinator.production(config: { [weak self] in self?.config })
+        editCoordinator = EditCoordinator.production(config: { [weak self] in self?.config })
+        askCoordinator = AskCoordinator.production(config: { [weak self] in self?.config })
+        let rewriteCoordinator = self.rewriteCoordinator!
+        let editCoordinator = self.editCoordinator!
+        let askCoordinator = self.askCoordinator!
+        authCoordinator = AuthCoordinator(didChangeSession: { 
+            rewriteCoordinator.resetSession()
+            editCoordinator.resetSession()
+            askCoordinator.resetSession()
+        })
         sequencer = DictationSequencer(environment: AppDictationEnvironment(delegate: self))
         registerSleepWakeObservers()
+        UpdaterController.shared.start()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.setup()
@@ -47,6 +80,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupInner() throws {
         let isFirstRun = !FileManager.default.fileExists(atPath: Config.configFile.path)
+        #if DEBUG
+        // Only DEBUG builds ever stored the pre-sign-in dev token.
+        SessionStore().deleteLegacyItem()
+        #endif
         config = Config.load()
         inserter = TextInserter()
         migrateAudioDeviceUIDIfNeeded()
@@ -158,6 +195,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             )
             manager.start(
                 onKeyDown: { [weak self] in
+                    self?.currentRecordingMode = .dictate
                     self?.handleKeyDown()
                 },
                 onKeyUp: { [weak self] in
@@ -165,6 +203,44 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             )
             hotkeyManagers.append(manager)
+        }
+        
+        editHotkeyManager?.stop()
+        editHotkeyManager = nil
+        if let hk = config.editHotkey {
+            let manager = HotkeyManager(
+                keyCode: hk.keyCode,
+                modifiers: hk.modifierFlags
+            )
+            manager.start(
+                onKeyDown: { [weak self] in
+                    self?.currentRecordingMode = .edit
+                    self?.handleKeyDown()
+                },
+                onKeyUp: { [weak self] in
+                    self?.handleKeyUp()
+                }
+            )
+            editHotkeyManager = manager
+        }
+        
+        askHotkeyManager?.stop()
+        askHotkeyManager = nil
+        if let hk = config.askHotkey {
+            let manager = HotkeyManager(
+                keyCode: hk.keyCode,
+                modifiers: hk.modifierFlags
+            )
+            manager.start(
+                onKeyDown: { [weak self] in
+                    self?.currentRecordingMode = .ask
+                    self?.handleKeyDown()
+                },
+                onKeyUp: { [weak self] in
+                    self?.handleKeyUp()
+                }
+            )
+            askHotkeyManager = manager
         }
 
         isReady = true
@@ -207,6 +283,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             // A session-long stop after a sign-in or Pro answer ends when the user
             // turns rewrite off or on.
             rewriteCoordinator.resetSession()
+            editCoordinator.resetSession()
+            askCoordinator.resetSession()
         }
         config = newConfig
         recorder.preferredDeviceID = newDeviceID
@@ -224,10 +302,51 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                 modifiers: hk.modifierFlags
             )
             manager.start(
-                onKeyDown: { [weak self] in self?.handleKeyDown() },
+                onKeyDown: { [weak self] in 
+                    self?.currentRecordingMode = .dictate
+                    self?.handleKeyDown() 
+                },
                 onKeyUp: { [weak self] in self?.handleKeyUp() }
             )
             hotkeyManagers.append(manager)
+        }
+        
+        editHotkeyManager?.stop()
+        editHotkeyManager = nil
+        if let hk = config.editHotkey {
+            let manager = HotkeyManager(
+                keyCode: hk.keyCode,
+                modifiers: hk.modifierFlags
+            )
+            manager.start(
+                onKeyDown: { [weak self] in
+                    self?.currentRecordingMode = .edit
+                    self?.handleKeyDown()
+                },
+                onKeyUp: { [weak self] in
+                    self?.handleKeyUp()
+                }
+            )
+            editHotkeyManager = manager
+        }
+        
+        askHotkeyManager?.stop()
+        askHotkeyManager = nil
+        if let hk = config.askHotkey {
+            let manager = HotkeyManager(
+                keyCode: hk.keyCode,
+                modifiers: hk.modifierFlags
+            )
+            manager.start(
+                onKeyDown: { [weak self] in
+                    self?.currentRecordingMode = .ask
+                    self?.handleKeyDown()
+                },
+                onKeyUp: { [weak self] in
+                    self?.handleKeyUp()
+                }
+            )
+            askHotkeyManager = manager
         }
 
         if !wasDownloading && !Transcriber.modelExists(modelSize: config.modelSize) {
@@ -265,7 +384,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         let transcriber = Transcriber(
             modelSize: config.modelSize,
             language: config.language,
-            whisperPrompt: config.whisperPrompt
+            whisperPrompt: config.whisperPrompt,
+            translateToEnglish: config.translateToEnglish?.value ?? false
         )
         transcriber.spokenPunctuation = config.spokenPunctuation?.value ?? false
         return transcriber
@@ -298,6 +418,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleRecordingStart() {
         statusBar.state = .recording
+        if currentRecordingMode == .ask {
+            DispatchQueue.main.async { AskOverlayController.shared.show(state: .listening) }
+        }
         do {
             let outputURL: URL
             if Config.effectiveMaxRecordings(config.maxRecordings) == 0 {
@@ -319,6 +442,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         guard let audioURL = recorder.stopRecording() else {
             RecordingCancellation.discardTrackedPartialRecording(&currentRecordingURL)
             statusBar.state = .idle
+            if currentRecordingMode == .ask {
+                DispatchQueue.main.async { AskOverlayController.shared.hide() }
+            }
             return
         }
 
@@ -349,26 +475,61 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                 // frontmost app now, before any rewrite wait. The coordinator
                 // consults RewriteGate; nothing here decides whether text may leave
                 // the device. It calls `completion` exactly once.
+                let mode = self.currentRecordingMode
                 DispatchQueue.main.async {
-                    let ticket = self.sequencer.begin(raw: text)
-                    self.rewriteCoordinator.process(
-                        transcript: text,
-                        // Sampled here, on the main thread, immediately before the
-                        // decision: not when recording stopped, before Whisper ran.
-                        mode: { self.config.rewriteMode },
-                        willRewrite: { self.sequencer.willRewrite(ticket) },
-                        completion: { outcome in
-                            // Synchronous (nothing sent) completions are already on
-                            // the main thread and finish in the same turn.
-                            if Thread.isMainThread {
-                                self.sequencer.finish(ticket, outcome: outcome)
-                            } else {
+                    if mode == .ask {
+                        self.statusBar.state = .idle
+                        self.statusBar.buildMenu()
+                        self.askCoordinator.process(
+                            instruction: text,
+                            mode: { self.config.rewriteMode },
+                            willAsk: { 
+                                DispatchQueue.main.async { AskOverlayController.shared.show(state: .processing) }
+                            },
+                            completion: { outcome in
                                 DispatchQueue.main.async {
-                                    self.sequencer.finish(ticket, outcome: outcome)
+                                    if let notice = outcome.notice, !outcome.rewritten {
+                                        AskOverlayController.shared.show(state: .error(notice))
+                                    } else {
+                                        AskOverlayController.shared.show(state: .answered(outcome.text))
+                                    }
                                 }
                             }
+                        )
+                        return
+                    }
+
+                    let ticket = self.sequencer.begin(raw: text)
+                    let completionHandler: (RewriteOutcome) -> Void = { outcome in
+                        let updateBlock = {
+                            if outcome.rewritten {
+                                self.lastRewritePair = (raw: text, rewritten: outcome.text)
+                                self.statusBar.buildMenu()
+                            }
+                            self.sequencer.finish(ticket, outcome: outcome)
                         }
-                    )
+                        if Thread.isMainThread {
+                            updateBlock()
+                        } else {
+                            DispatchQueue.main.async(execute: updateBlock)
+                        }
+                    }
+                    
+                    if mode == .dictate {
+                        self.rewriteCoordinator.process(
+                            transcript: text,
+                            mode: { self.config.rewriteMode },
+                            willRewrite: { self.sequencer.willRewrite(ticket) },
+                            completion: completionHandler
+                        )
+                    } else if mode == .edit {
+                        self.editCoordinator.process(
+                            instruction: text,
+                            mode: { self.config.rewriteMode },
+                            willEdit: { self.sequencer.willRewrite(ticket) },
+                            completion: completionHandler
+                        )
+                    }
                 }
             } catch {
                 if maxRecordings > 0 {

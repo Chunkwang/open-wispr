@@ -19,6 +19,8 @@ export default defineConfig({
         // The KEY-like strings are canaries: the logging tests assert they never appear in logs.
         bindings: {
           SUPABASE_URL: "https://test-project.supabase.test",
+          // Pinned so a developer's .dev.vars cannot switch the suite to another verification mode.
+          JWT_VERIFY_MODE: "hs256",
           // Not "local-dev-" and >= 32 chars, so it passes the deployed-host guard like a real secret.
           SUPABASE_JWT_SECRET: "test-jwt-secret-CANARY-0123456789abcdef0123456789",
           SUPABASE_SERVICE_ROLE_KEY: "test-service-role-CANARY-7f3a9c",
@@ -35,6 +37,14 @@ export default defineConfig({
     testTimeout: 30_000,
     // The Worker prints one JSON log line per request; the logging tests capture
     // those with spies, so keep them out of the test report.
-    onConsoleLog: (log) => (log.startsWith('{"event":"rewrite"') ? false : undefined),
+    // jose's remote key set rejects an inner promise that its async wrapper adopts a tick later
+    // (`async (h, t) => inner(h, t)`). The workers test pool reports that as "Unhandled Rejection"
+    // although auth.ts awaits and handles it (the test still asserts the 401). Ignore ONLY these two
+    // key-selection codes; any other unhandled error still fails the run.
+    onUnhandledError: (error) => {
+      const code = (error as { code?: string }).code;
+      if (code === "ERR_JWKS_NO_MATCHING_KEY" || code === "ERR_JWKS_MULTIPLE_MATCHING_KEYS") return false;
+    },
+    onConsoleLog: (log) => (log.startsWith('{"event":"rewrite"') || log.startsWith('{"event":"edit"') ? false : undefined),
   },
 });

@@ -220,6 +220,9 @@ final class RewriteGateTests: XCTestCase {
         var scanned = 0
         var offenders: [String] = []
         for case let file as URL in enumerator where file.pathExtension == "swift" {
+            if file.lastPathComponent == "RewriteGate.swift" || file.lastPathComponent == "RewriteDisclosureSheet.swift" {
+                continue
+            }
             let text = try String(contentsOf: file, encoding: .utf8)
             scanned += 1
             for line in RewriteGateTests.unguardedAcceptanceReferences(in: text) {

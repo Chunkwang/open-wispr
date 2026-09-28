@@ -24,16 +24,9 @@ final class RewriteNoticeTests: XCTestCase {
         return all.map(representative(of:))
     }
 
-    private let banned = ["smart", "seamless", "powerful", "magic", "simply", "oops", "just", "sorry", "apolog", "unfortunately"]
+    private let banned = CopyLint.banned
 
-    private func sentenceCount(_ text: String) -> Int {
-        var count = 0
-        let chars = Array(text)
-        for (i, c) in chars.enumerated() where c == "." || c == "?" {
-            if i + 1 == chars.count || chars[i + 1] == " " { count += 1 }
-        }
-        return count
-    }
+    private func sentenceCount(_ text: String) -> Int { CopyLint.sentenceCount(text) }
 
     func testCancelledShowsNothing() {
         XCTAssertNil(RewriteError.cancelled.userNotice)

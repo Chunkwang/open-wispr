@@ -5,11 +5,13 @@ public class Transcriber {
     private let language: String
     private let whisperPrompt: String?
     public var spokenPunctuation: Bool = false
+    public var translateToEnglish: Bool = false
 
-    public init(modelSize: String = "base.en", language: String = "en", whisperPrompt: String? = nil) {
+    public init(modelSize: String = "base.en", language: String = "en", whisperPrompt: String? = nil, translateToEnglish: Bool = false) {
         self.modelSize = modelSize
         self.language = language
         self.whisperPrompt = whisperPrompt
+        self.translateToEnglish = translateToEnglish
     }
 
     public func transcribe(audioURL: URL) throws -> String {
@@ -63,6 +65,9 @@ public class Transcriber {
             "--no-timestamps",
             "-nt",
         ]
+        if translateToEnglish {
+            args.append("-tr")
+        }
         if let prompt = effectiveWhisperPrompt {
             args += ["--prompt", prompt]
         }
@@ -115,6 +120,9 @@ public class Transcriber {
         if let bundled = Bundle.main.url(forResource: "whisper-cli", withExtension: nil, subdirectory: "whisper") {
             candidates.append(bundled.path)
         }
+        if let bundledRoot = Bundle.main.url(forResource: "whisper-cli", withExtension: nil) {
+            candidates.append(bundledRoot.path)
+        }
         candidates += [
             "/opt/homebrew/bin/whisper-cli",
             "/usr/local/bin/whisper-cli",
@@ -159,6 +167,9 @@ public class Transcriber {
         var candidates: [String] = []
         if let bundled = Bundle.main.url(forResource: modelFileName, withExtension: nil, subdirectory: "models") {
             candidates.append(bundled.path)
+        }
+        if let bundledRoot = Bundle.main.url(forResource: "ggml-\(modelSize)", withExtension: "bin") {
+            candidates.append(bundledRoot.path)
         }
         candidates += [
             "\(Config.configDir.path)/models/\(modelFileName)",

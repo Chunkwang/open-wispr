@@ -24,6 +24,34 @@ public struct Config: Codable {
     public var audioInputDeviceID: UInt32?
     public var audioInputDeviceUID: String?
     public var rewriteMode: RewriteMode
+    public var editHotkey: HotkeyConfig?
+    public var askHotkey: HotkeyConfig?
+    public var analyticsOptIn: FlexBool?
+    public var localLLMEnabled: FlexBool?
+    public var localLLMURL: String?
+    public var localLLMModel: String?
+    public var translateToEnglish: FlexBool?
+    /// Off unless a config.json explicitly sets it. Gates the v2 agent-layer
+    /// surfaces (Edit and Ask context/screen awareness) independently of, and
+    /// before, consent and sign-in — see `EditGate`/`AskGate`. Absent in old
+    /// configs, so an old config.json keeps this off, matching CLAUDE.md's rule
+    /// that this flag ships off by default.
+    public var agentLayerEnabled: FlexBool?
+
+    /// Whether Edit/Ask may run at all, before consent or sign-in are even
+    /// considered. True only when config.json sets `agentLayerEnabled`, or, in a
+    /// DEBUG build only, when `OPENWISPR_AGENT_LAYER=1` is set in the process
+    /// environment for local testing. The environment path never persists
+    /// anything to config.json or UserDefaults, so it cannot leak from a DEBUG
+    /// session into a release build sharing the same files, and it does not
+    /// exist at all in a release binary (the `#if DEBUG` block is compiled out).
+    public var isAgentLayerEnabled: Bool {
+        if agentLayerEnabled?.value == true { return true }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["OPENWISPR_AGENT_LAYER"] == "1" { return true }
+        #endif
+        return false
+    }
 
     public var hotkey: HotkeyConfig {
         get { hotkeys[0] }
@@ -57,6 +85,14 @@ public struct Config: Codable {
         case audioInputDeviceID
         case audioInputDeviceUID
         case rewriteMode
+        case editHotkey
+        case askHotkey
+        case analyticsOptIn
+        case localLLMEnabled
+        case localLLMURL
+        case localLLMModel
+        case translateToEnglish
+        case agentLayerEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -79,12 +115,17 @@ public struct Config: Codable {
         self.toggleMode = try c.decodeIfPresent(FlexBool.self, forKey: .toggleMode)
         self.audioInputDeviceID = try c.decodeIfPresent(UInt32.self, forKey: .audioInputDeviceID)
         self.audioInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .audioInputDeviceUID)
-        // Lenient on purpose: a bad value here must not fail the whole decode,
-        // because Config.load() falls back to defaults and would discard every
-        // other setting. Anything unrecognised means "off", the no-network choice.
         let rawMode = (try? c.decodeIfPresent(String.self, forKey: .rewriteMode)) ?? nil
         self.rewriteMode = rawMode
             .flatMap { RewriteMode(rawValue: $0.trimmingCharacters(in: .whitespaces).lowercased()) } ?? .off
+        self.editHotkey = try c.decodeIfPresent(HotkeyConfig.self, forKey: .editHotkey)
+        self.askHotkey = try c.decodeIfPresent(HotkeyConfig.self, forKey: .askHotkey)
+        self.analyticsOptIn = try c.decodeIfPresent(FlexBool.self, forKey: .analyticsOptIn)
+        self.localLLMEnabled = try c.decodeIfPresent(FlexBool.self, forKey: .localLLMEnabled)
+        self.localLLMURL = try c.decodeIfPresent(String.self, forKey: .localLLMURL)
+        self.localLLMModel = try c.decodeIfPresent(String.self, forKey: .localLLMModel)
+        self.translateToEnglish = try c.decodeIfPresent(FlexBool.self, forKey: .translateToEnglish)
+        self.agentLayerEnabled = try c.decodeIfPresent(FlexBool.self, forKey: .agentLayerEnabled)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -101,6 +142,14 @@ public struct Config: Codable {
         try c.encodeIfPresent(audioInputDeviceID, forKey: .audioInputDeviceID)
         try c.encodeIfPresent(audioInputDeviceUID, forKey: .audioInputDeviceUID)
         try c.encode(rewriteMode, forKey: .rewriteMode)
+        try c.encodeIfPresent(editHotkey, forKey: .editHotkey)
+        try c.encodeIfPresent(askHotkey, forKey: .askHotkey)
+        try c.encodeIfPresent(analyticsOptIn, forKey: .analyticsOptIn)
+        try c.encodeIfPresent(localLLMEnabled, forKey: .localLLMEnabled)
+        try c.encodeIfPresent(localLLMURL, forKey: .localLLMURL)
+        try c.encodeIfPresent(localLLMModel, forKey: .localLLMModel)
+        try c.encodeIfPresent(translateToEnglish, forKey: .translateToEnglish)
+        try c.encodeIfPresent(agentLayerEnabled, forKey: .agentLayerEnabled)
     }
 
     public init(
@@ -114,7 +163,14 @@ public struct Config: Codable {
         toggleMode: FlexBool?,
         audioInputDeviceID: UInt32? = nil,
         audioInputDeviceUID: String? = nil,
-        rewriteMode: RewriteMode = .off
+        rewriteMode: RewriteMode = .off,
+        editHotkey: HotkeyConfig? = nil,
+        askHotkey: HotkeyConfig? = nil,
+        localLLMEnabled: FlexBool? = nil,
+        localLLMURL: String? = nil,
+        localLLMModel: String? = nil,
+        translateToEnglish: FlexBool? = nil,
+        agentLayerEnabled: FlexBool? = nil
     ) {
         self.hotkeys = hotkeys.isEmpty
             ? [HotkeyConfig(keyCode: 63, modifiers: [])]
@@ -129,6 +185,13 @@ public struct Config: Codable {
         self.audioInputDeviceID = audioInputDeviceID
         self.audioInputDeviceUID = audioInputDeviceUID
         self.rewriteMode = rewriteMode
+        self.editHotkey = editHotkey
+        self.askHotkey = askHotkey
+        self.localLLMEnabled = localLLMEnabled
+        self.localLLMURL = localLLMURL
+        self.localLLMModel = localLLMModel
+        self.translateToEnglish = translateToEnglish
+        self.agentLayerEnabled = agentLayerEnabled
     }
 
     public static let supportedLanguages: [LanguageOption] = [

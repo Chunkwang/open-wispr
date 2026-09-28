@@ -7,6 +7,8 @@ final class StubURLProtocol: URLProtocol {
     struct Reply {
         var status: Int = 200
         var body: Data = Data()
+        /// Response headers, e.g. `Retry-After`.
+        var headers: [String: String] = [:]
         var error: Error?
         /// Never answers, to exercise the total-deadline and cancellation paths.
         var stall = false
@@ -43,7 +45,7 @@ final class StubURLProtocol: URLProtocol {
             return
         }
         let response = HTTPURLResponse(
-            url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: nil
+            url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: reply.body)

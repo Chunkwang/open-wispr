@@ -85,22 +85,25 @@ final class RewritePipeline {
     }()
 
     /// https only, except plain http to a loopback host for `wrangler dev`.
-    /// Anything else, or a disallowed override, falls back to the default.
-    static func resolveBaseURL(override: String?, allowOverride: Bool) -> URL {
+    /// Anything else, or a disallowed override, falls back to `defaultURL`.
+    /// Shared with `AuthConfig`, which passes its own default.
+    static func resolveBaseURL(override: String?, allowOverride: Bool, default defaultURL: URL = defaultProxyURL) -> URL {
         guard allowOverride,
               let override = override,
               let url = URL(string: override),
               let scheme = url.scheme?.lowercased(),
               let host = url.host?.lowercased()
-        else { return defaultProxyURL }
-        let loopback = ["localhost", "127.0.0.1", "::1"].contains(host)
-        if scheme == "https" || (scheme == "http" && loopback) { return url }
-        return defaultProxyURL
+        else { return defaultURL }
+        if scheme == "https" || (scheme == "http" && isLoopbackHost(host)) { return url }
+        return defaultURL
     }
 
-    /// Keychain account of the session token. Internal so the DEBUG-only dev menu
-    /// can store a token where this pipeline reads it.
-    static let authAccount = "session-token"
+    /// The loopback hostnames a plain-http override may target. Shared with
+    /// `LocalLLMPipeline`, which must never let a configured URL reach a network
+    /// host under a check that is meant to mean "stays on this machine".
+    static func isLoopbackHost(_ host: String) -> Bool {
+        ["localhost", "127.0.0.1", "::1"].contains(host.lowercased())
+    }
 
     private let session: URLSession
     private let baseURL: URL
@@ -115,7 +118,7 @@ final class RewritePipeline {
             session: RewritePipeline.makeSession(configuration: .ephemeral, timeout: timeout),
             baseURL: RewritePipeline.proxyBaseURL,
             timeout: timeout,
-            tokenProvider: RewritePipeline.keychainToken
+            tokenProvider: { RewritePipeline.keychainToken() }
         )
     }
 
@@ -149,8 +152,12 @@ final class RewritePipeline {
         return URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
     }
 
-    static func keychainToken() -> String? {
-        Keychain.get(account: authAccount)
+    /// The stored session's access token, as is (refresh arrives in Stage 3). Nil
+    /// when signed out or when the Keychain cannot be read right now; both mean
+    /// nothing is sent.
+    static func keychainToken(store: SessionStore = SessionStore()) -> String? {
+        guard case .success(let session?) = store.load() else { return nil }
+        return session.accessToken
     }
 
     /// Never throws: every failure is a `RewriteError`. Callers fall back to

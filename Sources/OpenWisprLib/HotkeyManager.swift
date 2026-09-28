@@ -1,6 +1,29 @@
 import AppKit
 import Foundation
 
+/// Listens for a single configured hotkey using `NSEvent.addGlobalMonitorForEvents`.
+///
+/// ## Security audit (Task 5.2, 2026-09-26)
+///
+/// This class receives every key event system-wide through the global monitor.
+/// It does NOT read, store, or log any keystroke content. Specifically:
+///
+/// - `handleEvent` checks ONLY `event.keyCode` (a hardware scan code) and
+///   `event.modifierFlags` against the configured hotkey. Every non-matching
+///   event is discarded immediately via `guard event.keyCode == keyCode`.
+/// - No call to `event.characters`, `event.charactersIgnoringModifiers`, or
+///   any other text-producing property exists anywhere in this file.
+/// - No event data is written to disk, sent over the network, or stored in
+///   any collection. The only side effect is calling `onKeyDown()` or
+///   `onKeyUp()` — zero-argument closures with no event data.
+/// - The monitor is removed on `stop()` and when the manager is deallocated.
+///
+/// **Claim for TRUST.md:** "The app watches for your hotkey and ignores every
+/// other key. It never records or stores keystrokes."
+///
+/// **How to verify:** `grep -n 'characters' Sources/OpenWisprLib/HotkeyManager.swift`
+/// returns zero matches. The only `event` properties accessed are `.keyCode`,
+/// `.type`, and `.modifierFlags`.
 class HotkeyManager {
     private var globalMonitor: Any?
     private let keyCode: UInt16

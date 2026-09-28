@@ -12,7 +12,8 @@ import type { Env } from "../src/types";
  * the handler and only `brokenQuotaEnv` / `hangingQuotaEnv` name the binding.
  */
 
-export type TestEnv = Env & { TEST_EXAMPLE_JWT_SECRET: string };
+// The test bindings always carry a JWT secret (Env makes it optional because jwks mode needs none).
+export type TestEnv = Env & { SUPABASE_JWT_SECRET: string; TEST_EXAMPLE_JWT_SECRET: string };
 export const baseEnv = rawEnv as unknown as TestEnv;
 
 export const SUPABASE_URL = baseEnv.SUPABASE_URL;
@@ -35,7 +36,13 @@ export function newUserId(): string {
 export interface TokenOptions {
   sub?: string | null;
   secret?: string;
+  /** Sign with this key instead of the HMAC secret (e.g. an ES256 or RS256 private key). */
+  key?: Parameters<SignJWT["sign"]>[0];
   alg?: string;
+  /** Adds a `kid` header. */
+  kid?: string;
+  /** Extra protected-header fields (e.g. `jku`), applied last. */
+  header?: Record<string, unknown>;
   iss?: string | null;
   aud?: string | string[] | null;
   /** Seconds from now; negative means already expired; null means no `exp` claim at all. */
@@ -43,14 +50,19 @@ export interface TokenOptions {
 }
 
 export async function mintToken(opts: TokenOptions = {}): Promise<string> {
-  const jwt = new SignJWT({ role: "authenticated" }).setProtectedHeader({ alg: opts.alg ?? "HS256", typ: "JWT" });
+  const jwt = new SignJWT({ role: "authenticated" }).setProtectedHeader({
+    alg: opts.alg ?? "HS256",
+    typ: "JWT",
+    ...(opts.kid ? { kid: opts.kid } : {}),
+    ...opts.header,
+  });
   if (opts.sub !== null) jwt.setSubject(opts.sub ?? newUserId());
   if (opts.iss !== null) jwt.setIssuer(opts.iss ?? ISSUER);
   if (opts.aud !== null) jwt.setAudience(opts.aud ?? "authenticated");
   const now = Math.floor(Date.now() / 1000);
   jwt.setIssuedAt(now - 10);
   if (opts.expiresIn !== null) jwt.setExpirationTime(now + (opts.expiresIn ?? 3600));
-  return jwt.sign(new TextEncoder().encode(opts.secret ?? JWT_SECRET));
+  return jwt.sign(opts.key ?? new TextEncoder().encode(opts.secret ?? JWT_SECRET));
 }
 
 export interface CallOptions {
@@ -90,6 +102,19 @@ export async function rewriteAs(
   const userId = opts.userId ?? newUserId();
   const token = opts.token ?? (await mintToken({ sub: userId }));
   const res = await call({ ...opts, token, json: { transcript } });
+  return { res, userId, token };
+}
+
+/** Signs in a fresh user and posts a voice edit to /v1/edit. Extra body fields go in `extra`. */
+export async function editAs(
+  instruction: unknown,
+  selection: unknown,
+  opts: { userId?: string; token?: string; extra?: Record<string, unknown> } & Omit<CallOptions, "token" | "json" | "path"> = {}
+): Promise<{ res: Response; userId: string; token: string }> {
+  const userId = opts.userId ?? newUserId();
+  const token = opts.token ?? (await mintToken({ sub: userId }));
+  const { extra, userId: _u, token: _t, ...rest } = opts;
+  const res = await call({ ...rest, token, path: "/v1/edit", json: { instruction, selection, ...extra } });
   return { res, userId, token };
 }
 

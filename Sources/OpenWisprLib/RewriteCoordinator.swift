@@ -63,14 +63,15 @@ final class RewriteCoordinator {
     /// honours mode, consent and token, and that the deadline is 6 s.
     static func production(
         consent: RewriteConsent = .shared,
-        hasToken: @escaping () -> Bool = { RewritePipeline.keychainToken() != nil },
+        hasToken: @escaping () -> Bool = { SessionStore().isSignedIn },
         timeout: TimeInterval = RewriteCoordinator.productionTimeout,
+        config: @escaping () -> Config? = { nil },
         makeReachability: @escaping () -> NetworkReachability = { PathMonitorReachability() },
         makeRewriter: @escaping (TimeInterval) -> Rewriter = { RewriteCoordinator.pipelineRewriter(timeout: $0) }
     ) -> RewriteCoordinator {
         RewriteCoordinator(
             gate: { mode in
-                RewriteGate.shouldRewrite(mode: mode, consent: consent, hasToken: hasToken())
+                RewriteGate.shouldRewrite(mode: mode, consent: consent, hasToken: hasToken(), config: config())
             },
             makeReachability: makeReachability,
             makeRewriter: { makeRewriter(timeout) }
@@ -79,6 +80,13 @@ final class RewriteCoordinator {
 
     /// The only place a `RewritePipeline` is constructed (a test enforces this).
     static func pipelineRewriter(timeout: TimeInterval) -> Rewriter {
+        let config = Config.load()
+        if config.localLLMEnabled?.value == true,
+           let url = LocalLLMPipeline.validatedURL(from: config.localLLMURL) {
+            let model = config.localLLMModel ?? LocalLLMPipeline.defaultModel
+            let localPipeline = LocalLLMPipeline(baseURL: url, model: model, timeout: timeout)
+            return { await localPipeline.rewrite(transcript: $0) }
+        }
         let pipeline = RewritePipeline(timeout: timeout)
         return { await pipeline.rewrite(transcript: $0) }
     }

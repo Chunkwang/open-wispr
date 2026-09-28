@@ -8,12 +8,10 @@ import Foundation
 /// of the disclosure the user accepted. Bumping `currentDisclosureVersion` when
 /// the disclosure text changes makes every earlier acceptance stop counting.
 ///
-/// Until the disclosure sheet exists (Task 5.1) nothing in the app is allowed to
-/// record acceptance in a release build: `recordAcceptance()` is compiled only
-/// under `#if DEBUG`, so a release binary contains no code that can set it.
-/// `RewriteGateTests` scans the sources and fails if any call is left outside a
-/// DEBUG region. Task 5.1 removes the guard and calls it from the sheet's
-/// "Accept" button.
+/// `recordAcceptance()` is called only from the disclosure sheet's "Accept"
+/// button (`RewriteDisclosureSheet.swift`, Task 5.1); nothing else in the app
+/// may call it. `RewriteGateTests` scans the sources and fails if any other
+/// call exists outside a `#if DEBUG` region.
 public struct RewriteConsent {
     /// Version of the disclosure text the user must have accepted.
     public static let currentDisclosureVersion = 1
@@ -45,13 +43,11 @@ public struct RewriteConsent {
         defaults.removeObject(forKey: RewriteConsent.defaultsKey)
     }
 
-    #if DEBUG
-    /// DEBUG builds only, until the disclosure sheet (Task 5.1) is the one place
-    /// that calls this. Do not reference it outside a `#if DEBUG` region.
+    /// Records the user's acceptance of the current disclosure version.
+    /// Called only from the disclosure sheet's Accept button.
     public func recordAcceptance() {
         defaults.set(RewriteConsent.currentDisclosureVersion, forKey: RewriteConsent.defaultsKey)
     }
-    #endif
 }
 
 /// The single decision point for whether a transcript may leave the device.
@@ -63,18 +59,19 @@ public enum RewriteGate {
     public static func shouldRewrite(
         mode: RewriteMode,
         consent: RewriteConsent,
-        hasToken: @autoclosure () -> Bool
+        hasToken: @autoclosure () -> Bool,
+        config: Config? = nil
     ) -> Bool {
         guard mode == .auto else { return false }
         guard consent.hasConsent else { return false }
+        if let config = config, config.localLLMEnabled?.value == true,
+           LocalLLMPipeline.validatedURL(from: config.localLLMURL) != nil {
+            return true
+        }
         return hasToken()
     }
 
-    #if DEBUG
-    /// One-line menu status derived from the same inputs as the gate. "on" is
-    /// returned exactly when `shouldRewrite` would return true. Only the DEBUG
-    /// menu shows it (the Rewrite menu is hidden from release builds until the
-    /// disclosure sheet exists, Task 5.1), so it is compiled only there.
+    /// One-line menu status derived from the same inputs as the gate.
     public static func statusLine(
         mode: RewriteMode,
         consent: RewriteConsent,
@@ -85,5 +82,4 @@ public enum RewriteGate {
         guard consent.hasConsent else { return "Rewrite: needs your consent" }
         return "Rewrite: on"
     }
-    #endif
 }
