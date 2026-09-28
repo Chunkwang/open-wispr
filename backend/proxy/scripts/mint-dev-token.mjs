@@ -12,10 +12,8 @@
 //
 // Prints only the token to stdout. Errors go to stderr with a non-zero exit.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { SignJWT } from "jose";
+import { readDevVar } from "./lib/dev-vars.mjs";
 
 const DEFAULT_USER_ID = "00000000-0000-4000-8000-000000000001";
 const DEFAULT_TTL_SECONDS = 3600;
@@ -42,27 +40,6 @@ function parseArgs(argv) {
     }
   }
   return { userId, ttl };
-}
-
-// Minimal .dev.vars reader (KEY=VALUE, # comments, optional quotes).
-function readDevVar(name) {
-  const file = join(dirname(fileURLToPath(import.meta.url)), "..", ".dev.vars");
-  let text;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    return undefined;
-  }
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq === -1 || line.slice(0, eq).trim() !== name) continue;
-    let value = line.slice(eq + 1).trim();
-    if (value.length >= 2 && /^(["']).*\1$/.test(value)) value = value.slice(1, -1);
-    return value;
-  }
-  return undefined;
 }
 
 const { userId, ttl } = parseArgs(process.argv.slice(2));

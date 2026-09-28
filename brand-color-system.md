@@ -20,6 +20,21 @@ Rationale, stated plainly: both direct competitors (Wispr Flow, HeyClicky) sit i
 | **Body text (light mode)** | Near-black, green-tinted | `#14201B` | Mirrors the dark-mode logic |
 | **Muted / secondary text** | Sage gray | `#8A9A92` | Timestamps, captions, disabled states — works in both modes |
 
+## 2b. Accessible text variants and window tokens (added 2026-09-25)
+
+Contrast was computed with the WCAG formula for the sign-in window (see `docs/design/sign-in.md`, section 8). Two pairs from the core palette fail for small text, so **new tokens are added; no existing hex is changed** (the sage and danger colours remain valid for non-text uses such as icons, borders and large graphics).
+
+| Token | Light mode | Dark mode | Use | Contrast |
+|---|---|---|---|---|
+| `mutedText` | `#55645C` | `#8A9A92` (sage) | Small secondary text, labels, placeholders | 5.90:1 on `#F7F9F7`; 6.41:1 on `#0D1210` |
+| `dangerText` | `#C0392B` | `#F0776A` | Error text and error icons | 5.14:1 on `#F7F9F7`; 6.80:1 on `#0D1210` |
+| `fieldFill` | `#FFFFFF` | `#151C18` | Text field background | typed text 16.77:1 / 14.63:1 |
+| `fieldStroke` | `#66766E` | `#6B7B73` | Field and secondary-button borders | 4.53:1 / 4.24:1 against the window background (UI needs 3:1) |
+| `buttonFillPressed` | `#26724C` | `#26724C` | Pressed primary button | white label 5.84:1 |
+| `disabledFill` | `#DDE4DF` | `#1E2823` | Disabled button fill | label 4.83:1 / 5.15:1 |
+
+Rules that follow from the computed ratios: **sage `#8A9A92` is not used for text on light backgrounds** (2.79:1); **emerald `#2D8659` is used only as a button fill (white label, 4.5008:1, which passes by a hair) and as a focus stroke, never as text** (about 4.2:1 on both backgrounds); forest `#1B4332` is not used as text or a border on dark (1.71:1); amber `#B8860B` is not used for text (3.08:1 on light). An optional darker `buttonFill` of `#297F53` (4.94:1) gives more margin.
+
 ## 3. Semantic Colors — the part that actually matters most
 
 This is the correction I want to be direct about, because it's not a style preference, it's a safety issue tied directly to the TRD's Confirmation Layer requirement — and it's worth being equally direct about the fact that **in v1, this semantic system is mostly dormant.** There's no agent layer yet, so there's no irreversible-action confirmation to protect. Specify it now anyway, for two reasons: it costs nothing to lock in early, and v1 still has a handful of legitimate uses for "success" and "error" states (a completed rewrite, a failed API call) that should already be using the right colors rather than improvising.

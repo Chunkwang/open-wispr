@@ -15,6 +15,11 @@ new_sqlite_classes = ["QuotaCounter"]
 
 [vars]
 SUPABASE_URL = "REPLACE_WITH_SUPABASE_PROJECT_URL"
+# How the Worker verifies Supabase access tokens: "hs256" (shared SUPABASE_JWT_SECRET, the legacy
+# default) or "jwks" (asymmetric ES256/RS256 keys fetched from the project's JWKS endpoint; then
+# SUPABASE_JWT_SECRET is not needed). Any other value makes the Worker answer 500 misconfigured.
+# Day 16: set this to match the real project's signing-key setting.
+JWT_VERIFY_MODE = "hs256"
 
 # Secrets (never committed) — set with:
 #   wrangler secret put SUPABASE_JWT_SECRET

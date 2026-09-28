@@ -5,6 +5,9 @@
 # Local mock Supabase (npm run dev:mock). Overrides [vars] in wrangler.toml. Tokens must carry
 # iss = <this URL>/auth/v1 (npm run dev:token does that from this value).
 SUPABASE_URL=http://127.0.0.1:54321
+# How the Worker verifies tokens: hs256 (default, shared secret below) or jwks (asymmetric keys; then
+# no secret is needed). Set in wrangler.toml [vars]; only override here for local experiments.
+# JWT_VERIFY_MODE=hs256
 # Must start with "local-dev-" (mint-dev-token.mjs refuses anything else). Never use a real project secret.
 # This exact value is published in the repo, so the Worker refuses it (500 misconfigured) on any
 # non-loopback hostname (as it does any local-dev- value or secret under 32 characters), and a test
