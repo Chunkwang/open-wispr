@@ -9,7 +9,8 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
     "test": "vitest run",
-    "test:mock": "node --test scripts/mock-supabase.test.mjs"
+    "test:mock": "node --test scripts/mock-supabase.test.mjs",
+    "eval:rewrite": "node eval/run.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

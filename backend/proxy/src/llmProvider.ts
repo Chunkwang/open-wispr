@@ -17,18 +17,22 @@ export function chooseProvider(env: Pick<Env, "LLM_PROVIDER">, hostname: string)
 /**
  * Deterministic local stand-in for the Claude rewrite. The input is treated
  * strictly as text: it is only pattern-matched, never interpreted, so
- * instructions inside a transcript have no effect.
+ * instructions inside a transcript have no effect. This is a LOCAL DEV
+ * convenience only (regex, not language understanding) — it says nothing
+ * about the real prompt/model's quality. See eval/run.mjs for that.
  */
 export function mockRewrite(transcript: string): string {
   let text = transcript.replace(/\s+/g, " ").trim();
 
-  // Leading fillers ("um so like ...").
-  text = text.replace(/^(?:(?:so|like|um+|uh+|you know(?=,))\b[,\s]*)+/i, "");
-  // Mid-sentence fillers: um/uh anywhere, ", you know", and "like" set off by a comma.
+  // Leading fillers ("um so like ...", plus basically/actually/I mean as leading padding).
+  text = text.replace(/^(?:(?:so|like|um+|uh+|basically|actually|i mean|you know(?=,))\b[,\s]*)+/i, "");
+  // Mid-sentence fillers: um/uh anywhere, ", you know", and "like"/"basically"/"actually"/"I mean" set off by a comma.
   text = text.replace(/\b(?:um+|uh+)\b,?\s*/gi, "");
   text = text.replace(/,\s*you know\b,?/gi, ",");
   text = text.replace(/,\s*like\b(?=\s)/gi, ",");
   text = text.replace(/\blike,\s*/gi, "");
+  text = text.replace(/,\s*(?:basically|actually|i mean)\b,?/gi, ",");
+  text = text.replace(/\b(?:basically|actually|i mean),\s*/gi, "");
 
   // Whitespace and punctuation spacing.
   text = text.replace(/\s+/g, " ").replace(/\s+([,.?!])/g, "$1").replace(/,\s*([.?!])/g, "$1").trim();
