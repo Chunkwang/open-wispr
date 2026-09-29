@@ -49,11 +49,20 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         let rewriteCoordinator = self.rewriteCoordinator!
         let editCoordinator = self.editCoordinator!
         let askCoordinator = self.askCoordinator!
-        authCoordinator = AuthCoordinator(didChangeSession: { 
+        // Captured as a local `let`, same as the coordinators above, so this
+        // `@Sendable` closure never captures `self` (an NSObject, not Sendable).
+        let statusBarForSessionChange = self.statusBar!
+        authCoordinator = AuthCoordinator(didChangeSession: {
             rewriteCoordinator.resetSession()
             editCoordinator.resetSession()
             askCoordinator.resetSession()
+            // Task 4.6: a sign-in needs the new user's tier, and a sign-out must
+            // not leave a stale Pro (or Free) badge showing.
+            TierStore.refresh(completion: { statusBarForSessionChange.buildMenu() })
         })
+        // Task 4.6: also fetch at launch, for a user who was already signed in
+        // from a previous run.
+        TierStore.refresh(completion: { [weak self] in self?.statusBar.buildMenu() })
         sequencer = DictationSequencer(environment: AppDictationEnvironment(delegate: self))
         registerSleepWakeObservers()
         UpdaterController.shared.start()

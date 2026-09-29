@@ -6,6 +6,31 @@ class MenuItemTarget: NSObject {
     @objc func invoke() { handler() }
 }
 
+/// Whether an "Upgrade to Pro" attempt is currently in flight, so a repeat
+/// click on the menu item while one is already running is a no-op instead of
+/// starting a second, overlapping two-minute poll loop (each of which burns
+/// quota from the shared "billing" and "me" buckets for nothing). Plain state,
+/// no AppKit or Keychain dependency, so it can be unit tested directly instead
+/// of through a full `StatusBarController` (which pulls in the real Keychain
+/// via `SessionStore` as soon as `buildMenu()` runs).
+final class UpgradeAttemptGuard {
+    private var inProgress = false
+
+    /// Marks an attempt in progress and returns `true`, unless one already
+    /// was — in which case nothing changes and this returns `false`.
+    func begin() -> Bool {
+        guard !inProgress else { return false }
+        inProgress = true
+        return true
+    }
+
+    /// Clears the in-flight state, whether the attempt succeeded or failed.
+    /// Safe to call even if no attempt is in progress.
+    func end() {
+        inProgress = false
+    }
+}
+
 class StatusBarController: NSObject {
     private var statusItem: NSStatusItem
     private var animationTimer: Timer?
@@ -24,6 +49,21 @@ class StatusBarController: NSObject {
     private var signOutItem: NSMenuItem?
     private var signInTarget: MenuItemTarget?
     private var signOutTarget: MenuItemTarget?
+    // Same reasoning as the sign-in items above: these live for the life of the
+    // menu so `applyBillingMenu` can show/hide them without a full rebuild when
+    // the tier changes while the menu is open (Tasks 4.7/4.8).
+    private var upgradeItem: NSMenuItem?
+    private var manageSubscriptionItem: NSMenuItem?
+    private var upgradeTarget: MenuItemTarget?
+    private var manageSubscriptionTarget: MenuItemTarget?
+    // Guards against a few rapid/accidental clicks on "Upgrade to Pro" starting
+    // several overlapping two-minute poll loops (each burning "billing" and "me"
+    // quota for no reason). Plain state with no AppKit or Keychain dependency
+    // (unlike this class itself, which pulls in the real Keychain through
+    // `SessionStore` as soon as `buildMenu()` runs), so its begin/end behavior
+    // is tested directly in `UpgradeAttemptGuardTests` instead of through a
+    // full `StatusBarController`.
+    private let upgradeGuard = UpgradeAttemptGuard()
 
     var reprocessHandler: ((URL) -> Void)?
     var onConfigChange: ((Config) -> Void)?
@@ -492,8 +532,26 @@ class StatusBarController: NSObject {
         self.signOutItem = signOutItem
         menu.addItem(signInItem)
         menu.addItem(signOutItem)
+
+        // "Upgrade to Pro" / "Manage Subscription" (Tasks 4.7/4.8): both items
+        // always exist, like the sign-in pair above; `applyBillingMenu` decides
+        // which (if either) shows, from the current sign-in state and
+        // `TierStore`. Kept as one visibility switch rather than two independent
+        // items so the two can never both show at once.
+        let upgradeTarget = MenuItemTarget { [weak self] in self?.startUpgrade() }
+        let manageSubscriptionTarget = MenuItemTarget { [weak self] in self?.startManageSubscription() }
+        self.upgradeTarget = upgradeTarget
+        self.manageSubscriptionTarget = manageSubscriptionTarget
+        let upgradeItem = NSMenuItem(title: BillingCopy.menuUpgrade, action: nil, keyEquivalent: "")
+        let manageSubscriptionItem = NSMenuItem(title: BillingCopy.menuManageSubscription, action: nil, keyEquivalent: "")
+        self.upgradeItem = upgradeItem
+        self.manageSubscriptionItem = manageSubscriptionItem
+        menu.addItem(upgradeItem)
+        menu.addItem(manageSubscriptionItem)
+
         menu.delegate = self
         applySignInMenu()
+        applyBillingMenu()
 
         // Task 7.6: Invite someone referral menu item
         if SessionStore().isSignedIn {
@@ -921,8 +979,112 @@ class StatusBarController: NSObject {
 extension StatusBarController: NSMenuDelegate {
     /// Re-reads the session every time the menu opens, so a Keychain that was
     /// locked at the last rebuild, or a sign-in from another launch, shows up.
+    /// Also re-applies the billing items: the two-minute upgrade poll can flip
+    /// `TierStore` while the menu exists, and this is what makes that show up
+    /// without waiting for some unrelated rebuild.
     func menuNeedsUpdate(_ menu: NSMenu) {
         applySignInMenu()
+        applyBillingMenu()
+    }
+
+    /// Shows "Upgrade to Pro…" for a signed-in Free user, "Manage Subscription…"
+    /// for a signed-in Pro user, and neither otherwise (signed out, a Keychain
+    /// that cannot be read right now, or a tier not yet fetched since launch —
+    /// Task 4.6's cache is `nil` in all three cases, and the menu must not guess).
+    func applyBillingMenu() {
+        guard let upgradeItem = upgradeItem, let manageSubscriptionItem = manageSubscriptionItem,
+              let upgradeTarget = upgradeTarget, let manageSubscriptionTarget = manageSubscriptionTarget
+        else { return }
+
+        func enable(_ item: NSMenuItem, _ target: MenuItemTarget) {
+            item.target = target
+            item.action = #selector(MenuItemTarget.invoke)
+            item.isHidden = false
+        }
+        func hide(_ item: NSMenuItem) {
+            item.target = nil
+            item.action = nil
+            item.isHidden = true
+        }
+
+        guard case .signedIn = SignInMenuState(SessionStore().load()) else {
+            hide(upgradeItem)
+            hide(manageSubscriptionItem)
+            return
+        }
+        switch TierStore.shared.current?.tier {
+        case .free:
+            enable(upgradeItem, upgradeTarget)
+            hide(manageSubscriptionItem)
+        case .pro:
+            hide(upgradeItem)
+            enable(manageSubscriptionItem, manageSubscriptionTarget)
+        case nil:
+            hide(upgradeItem)
+            hide(manageSubscriptionItem)
+        }
+    }
+
+    /// Starts a Checkout Session, opens it in the default browser, then polls
+    /// `GET /v1/me` for up to two minutes so the menu flips to Pro without a
+    /// restart (Task 4.7). The prompt shows at once, independent of how long the
+    /// checkout call itself takes.
+    ///
+    /// A repeat click while one attempt is already running is a no-op: without
+    /// this, a few rapid or accidental clicks would each start their own
+    /// checkout-then-poll sequence, all consuming from the same "billing" and
+    /// "me" quota buckets for nothing.
+    func startUpgrade() {
+        guard upgradeGuard.begin() else { return }
+        showNotice(BillingCopy.upgradePrompt, for: 6)
+        Task { [weak self] in
+            let result = await BillingCoordinator.production().upgrade(
+                openURL: { url in DispatchQueue.main.async { NSWorkspace.shared.open(url) } },
+                onTierUpdate: { info in
+                    DispatchQueue.main.async {
+                        TierStore.shared.set(info)
+                        self?.buildMenu()
+                    }
+                }
+            )
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.upgradeGuard.end()
+                switch result {
+                case .success:
+                    // The poll may have ended without ever seeing Pro (checkout
+                    // abandoned, or Stripe's webhook still in flight past the
+                    // two-minute window) — no notice then, per "no nagging"; the
+                    // menu already reflects whatever `TierStore` last learned.
+                    if TierStore.shared.current?.tier == .pro {
+                        self.showNotice(BillingCopy.upgradeComplete)
+                    }
+                case .failure(let error):
+                    if let notice = BillingCopy.notice(for: error) {
+                        self.showNotice(notice)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Starts a billing portal Session and opens it for a Pro user (Task 4.8).
+    /// `.noCustomer` (checkout was never completed) is a real edge case per
+    /// backend/proxy/README.md, not a crash: it gets the same plain notice as
+    /// every other billing failure.
+    func startManageSubscription() {
+        Task { [weak self] in
+            let result = await BillingCoordinator.production().manageSubscription(
+                openURL: { url in DispatchQueue.main.async { NSWorkspace.shared.open(url) } }
+            )
+            if case .failure(let error) = result {
+                DispatchQueue.main.async {
+                    if let notice = BillingCopy.notice(for: error) {
+                        self?.showNotice(notice)
+                    }
+                }
+            }
+        }
     }
 
     func applySignInMenu() {

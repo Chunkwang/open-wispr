@@ -48,6 +48,9 @@ Every outbound connection the client makes, with the file that makes it:
 | 5 | **`POST /v1/edit`** | Our Cloudflare Worker proxy | Selected text + voice instruction + window title | After Edit hotkey, if consented + signed in | [`EditPipeline.swift`](Sources/OpenWisprLib/EditPipeline.swift) |
 | 6 | **`POST /v1/ask`** | Our Cloudflare Worker proxy | Voice question + context text + window title + screenshot (if needed) + UI tree | After Ask hotkey, if consented + signed in | [`AskPipeline.swift`](Sources/OpenWisprLib/AskPipeline.swift) |
 | 7 | **Sparkle update check** | Appcast URL (not yet deployed) | Nothing (GET request) | Periodic, once wired | [`UpdaterController.swift`](Sources/OpenWisprLib/UpdaterController.swift) |
+| 8 | **`GET /v1/me`** | Our Cloudflare Worker proxy | Nothing but the bearer token; response is tier + remaining quota count | On launch, after every sign-in/sign-out, and every few seconds for up to two minutes after "Upgrade to Pro" opens Checkout | [`BillingClient.swift`](Sources/OpenWisprLib/BillingClient.swift), [`TierStore.swift`](Sources/OpenWisprLib/TierStore.swift) |
+| 9 | **`POST /v1/billing/checkout`** | Our Cloudflare Worker proxy | Nothing but the bearer token; response is a Stripe-hosted URL, opened in the default browser — no card details ever reach this app | When a signed-in Free user chooses "Upgrade to Pro…" | [`BillingClient.swift`](Sources/OpenWisprLib/BillingClient.swift), [`BillingCoordinator.swift`](Sources/OpenWisprLib/BillingCoordinator.swift) |
+| 10 | **`POST /v1/billing/portal`** | Our Cloudflare Worker proxy | Nothing but the bearer token; response is a Stripe-hosted URL, opened in the default browser | When a signed-in Pro user chooses "Manage Subscription…" | [`BillingClient.swift`](Sources/OpenWisprLib/BillingClient.swift), [`BillingCoordinator.swift`](Sources/OpenWisprLib/BillingCoordinator.swift) |
 
 ### 3b. What is NEVER sent
 
