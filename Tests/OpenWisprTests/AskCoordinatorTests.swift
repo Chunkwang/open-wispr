@@ -22,6 +22,22 @@ private final class FakeContextReader: AccessibilityContextReader, @unchecked Se
     func readSnapshot() async -> ContextSnapshot { snapshot }
 }
 
+/// Counts calls to `readSnapshot()`, so a test can prove a read did or did not
+/// happen instead of just reading the `prefetchedSnapshot ?? await reader...`
+/// line and trusting it. Used by the "exactly one read" tests below (the
+/// merged Context hotkey's whole justification for `prefetchedSnapshot`).
+private final class CountingContextReader: AccessibilityContextReader, @unchecked Sendable {
+    private let snapshot: ContextSnapshot
+    private let lock = NSLock()
+    private var _count = 0
+    init(_ snapshot: ContextSnapshot) { self.snapshot = snapshot }
+    func readSnapshot() async -> ContextSnapshot {
+        lock.lock(); _count += 1; lock.unlock()
+        return snapshot
+    }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+}
+
 private final class FakeReachability: NetworkReachability {
     let online: Bool
     init(online: Bool = true) { self.online = online }
@@ -151,5 +167,90 @@ final class AskCoordinatorTests: XCTestCase {
         XCTAssertTrue(AskCoordinator.frontmostAppChanged(from: nil, to: FrontmostAppInfo(pid: 1)))
         XCTAssertTrue(AskCoordinator.frontmostAppChanged(from: FrontmostAppInfo(pid: 1), to: nil))
         XCTAssertFalse(AskCoordinator.frontmostAppChanged(from: nil, to: nil))
+    }
+
+    // MARK: - merged Context hotkey: `prefetchedSnapshot` must be the only read
+
+    private func makeFullCoordinator(
+        reader: AccessibilityContextReader,
+        askerResult: Result<String, RewriteError> = .success("an answer"),
+        askerCalls: AskerCallCounter = AskerCallCounter(),
+        gate: @escaping (RewriteMode) -> Bool = { $0 == .auto }
+    ) -> AskCoordinator {
+        let fixedApp = FrontmostAppInfo(pid: 4242, bundleID: "com.example.notes", localizedName: "Notes")
+        return AskCoordinator(
+            gate: gate,
+            makeReachability: { FakeReachability() },
+            makeAsker: {
+                { _, _, _, _, _ in askerCalls.increment(); return askerResult }
+            },
+            contextReader: reader,
+            frontmostApp: { fixedApp }
+        )
+    }
+
+    /// When the gate itself refuses (mode is not `.auto`, mirroring
+    /// `agentLayerActive` being false in AppDelegate), no Accessibility read may
+    /// happen at all — not even the standalone Ask hotkey's own fallback read.
+    /// Every test above always calls with a gate of `{ $0 == .auto }` and mode
+    /// `.auto`, so the gate is always true; the `else { await reader.readSnapshot() }`
+    /// branch's *absence* under a failing gate was never actually exercised.
+    func testGateFalseNeverReadsAccessibilitySnapshotEvenWithoutPrefetch() {
+        let snapshot = ContextSnapshot(
+            status: .ok, appName: "Notes", bundleID: "com.apple.Notes",
+            focusedRole: "AXTextArea", selectedText: "some text"
+        )
+        let reader = CountingContextReader(snapshot)
+        let calls = AskerCallCounter()
+        let coordinator = makeFullCoordinator(reader: reader, askerCalls: calls, gate: { _ in false })
+        let outcome = run(coordinator)
+        XCTAssertEqual(reader.count, 0, "gate(mode) == false must short-circuit before any Accessibility read")
+        XCTAssertEqual(calls.value, 0)
+        XCTAssertFalse(outcome.rewritten)
+        XCTAssertEqual(outcome.text, "what does this say")
+    }
+
+    /// When a snapshot is prefetched (the merged Context hotkey's own single
+    /// read, shared with Edit's routing decision), `AskCoordinator` must use it
+    /// as-is and never perform its own second, independent read.
+    func testPrefetchedSnapshotIsUsedWithoutAnySecondRead() {
+        let snapshot = ContextSnapshot(
+            status: .ok, appName: "Notes", bundleID: "com.apple.Notes", windowTitle: "Untitled",
+            focusedRole: "AXTextArea", selectedText: nil
+        )
+        // Deliberately a snapshot that would bail out (secure field) if it were
+        // ever read by the coordinator's own reader instead of the prefetched one.
+        let differentSnapshot = ContextSnapshot(status: .secureField, appName: "1Password", bundleID: "x", focusedRole: ContextSnapshot.secureRole, isSecureField: true)
+        let reader = CountingContextReader(differentSnapshot)
+        let calls = AskerCallCounter()
+        let coordinator = makeFullCoordinator(reader: reader, askerCalls: calls)
+        let expectation = expectation(description: "completion")
+        var result: RewriteOutcome!
+        coordinator.process(
+            instruction: "what does this say",
+            mode: { .auto },
+            willAsk: {},
+            prefetchedSnapshot: snapshot,
+            completion: { outcome in result = outcome; expectation.fulfill() }
+        )
+        wait(for: [expectation], timeout: 5)
+        XCTAssertEqual(reader.count, 0, "a prefetched snapshot must mean the coordinator's own reader is never invoked")
+        XCTAssertEqual(calls.value, 1, "the prefetched (non-secure) snapshot should have let the request through to the asker")
+        XCTAssertTrue(result.rewritten)
+    }
+
+    /// Without a prefetched snapshot (the standalone Ask hotkey's call shape),
+    /// the coordinator must still read for itself exactly once.
+    func testNoPrefetchedSnapshotReadsExactlyOnce() {
+        let snapshot = ContextSnapshot(
+            status: .ok, appName: "Notes", bundleID: "com.apple.Notes", windowTitle: "Untitled",
+            focusedRole: "AXTextArea", selectedText: nil
+        )
+        let reader = CountingContextReader(snapshot)
+        let calls = AskerCallCounter()
+        let coordinator = makeFullCoordinator(reader: reader, askerCalls: calls)
+        let outcome = run(coordinator)
+        XCTAssertEqual(reader.count, 1)
+        XCTAssertTrue(outcome.rewritten)
     }
 }

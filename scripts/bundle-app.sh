@@ -109,7 +109,7 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <key>CFBundleExecutable</key>
     <string>open-wispr</string>
     <key>CFBundleIdentifier</key>
-    <string>com.goprimy.dictation-wip</string>
+    <string>com.murmur.app</string>
     <key>CFBundleName</key>
     <string>Dictation-WIP</string>
     <key>CFBundleDisplayName</key>
@@ -132,6 +132,8 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
 </plist>
 PLIST
 
-codesign --force --sign "$SIGN_IDENTITY" --identifier com.goprimy.dictation-wip "$APP_DIR"
+codesign --force --sign "$SIGN_IDENTITY" --identifier com.murmur.app "$APP_DIR"
+
+
 
 echo "Built $APP_DIR"

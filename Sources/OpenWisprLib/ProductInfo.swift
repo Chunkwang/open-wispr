@@ -12,7 +12,9 @@ public enum ProductInfo {
     public static let bundleName = "Dictation-WIP"
     /// CFBundleIdentifier. Changing it after users exist resets their granted
     /// permissions and Keychain access, so settle it before the first notarized build.
-    public static let bundleIdentifier = "com.goprimy.dictation-wip"
+    public static let bundleIdentifier = "com.murmur.app"
+
+
     /// Oldest macOS the app supports (LSMinimumSystemVersion, Package.swift platform).
     public static let minimumMacOSVersion = "13.0"
 }

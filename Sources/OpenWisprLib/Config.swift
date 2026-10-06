@@ -68,9 +68,15 @@ public struct Config: Codable {
     }
 
     public func hotkeySummary() -> String {
-        hotkeys
-            .map { KeyCodes.describe(keyCode: $0.keyCode, modifiers: $0.modifiers) }
-            .joined(separator: " · ")
+        var parts = hotkeys.map { KeyCodes.describe(keyCode: $0.keyCode, modifiers: $0.modifiers) }
+        // Only shown when the founder explicitly set one in config.json — the
+        // Context/Ask hotkey has no synthesized default. Enabling the agent
+        // layer flag alone must not start listening for a hotkey nobody chose
+        // (see AppDelegate's hotkey registration, which follows the same rule).
+        if let ask = askHotkey {
+            parts.append("Context/Edit: " + KeyCodes.describe(keyCode: ask.keyCode, modifiers: ask.modifiers))
+        }
+        return parts.joined(separator: " · ")
     }
 
     private static func deduplicateHotkeys(_ list: [HotkeyConfig]) -> [HotkeyConfig] {

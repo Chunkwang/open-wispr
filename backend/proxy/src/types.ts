@@ -55,6 +55,14 @@ export const EDIT_TIER_LIMITS: Record<Tier, { perMinute: number; perMonth: numbe
 };
 
 /**
+ * Limits for /v1/ask, which has its OWN counters (a separate Durable Object id, see rateLimit.ts).
+ */
+export const ASK_TIER_LIMITS: Record<Tier, { perMinute: number; perMonth: number }> = {
+  free: { perMinute: 0, perMonth: 0 },
+  pro: { perMinute: 5, perMonth: 1000 },
+};
+
+/**
  * Limits for POST /v1/referral/redeem, keyed by the authenticated user (own Durable Object,
  * see rateLimit.ts / quotaCounter.ts). Redemption is unrelated to tier — free and Pro users
  * both get the same small cap — so both tiers hold the same numbers; the field only exists
@@ -106,10 +114,11 @@ export const ME_LIMITS: Record<Tier, { perMinute: number; perMonth: number }> = 
 };
 
 /** Which counter a request draws on. Each kind has its own limits table and its own per-user counter. */
-export type QuotaKind = "rewrite" | "edit" | "referral" | "events" | "billing" | "me";
+export type QuotaKind = "rewrite" | "edit" | "ask" | "referral" | "events" | "billing" | "me";
 export const QUOTA_LIMITS: Record<QuotaKind, Record<Tier, { perMinute: number; perMonth: number }>> = {
   rewrite: TIER_LIMITS,
   edit: EDIT_TIER_LIMITS,
+  ask: ASK_TIER_LIMITS,
   referral: REFERRAL_LIMITS,
   events: EVENTS_LIMITS,
   billing: BILLING_LIMITS,
@@ -123,6 +132,7 @@ export const QUOTA_LIMITS: Record<QuotaKind, Record<Tier, { perMinute: number; p
  */
 export const MAX_TRANSCRIPT_CHARS = 16_000;
 export const MAX_BODY_BYTES = 64 * 1024;
+export const MAX_ASK_BODY_BYTES = 5 * 1024 * 1024; // 5 MB cap for vision/ask requests with base64 images
 
 /**
  * /v1/edit caps, all in Unicode code points (an emoji counts once), enforced before any quota or
@@ -134,3 +144,10 @@ export const MAX_EDIT_INSTRUCTION_CHARS = 500;
 /** Optional context fields are truncated to these (a long browser tab title must not fail an edit). */
 export const MAX_EDIT_CONTEXT_APP_CHARS = 100;
 export const MAX_EDIT_CONTEXT_WINDOW_TITLE_CHARS = 200;
+
+export const MAX_ASK_INSTRUCTION_CHARS = 1_000;
+export const MAX_ASK_TEXT_CHARS = 16_000;
+/** The accessibility UI tree is truncated (never refused) to this many code points: it is
+ * supporting context, not something a long window ever has reason to fail an ask over. */
+export const MAX_ASK_UI_TREE_CHARS = 8_000;
+

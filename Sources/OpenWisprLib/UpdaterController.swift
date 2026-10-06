@@ -13,19 +13,40 @@ import Sparkle
 public final class UpdaterController {
     public static let shared = UpdaterController()
 
-    private lazy var controller = SPUStandardUpdaterController(
-        startingUpdater: false,
-        updaterDelegate: nil,
-        userDriverDelegate: nil
-    )
+    private var controller: SPUStandardUpdaterController?
 
     private init() {}
 
+    private var isConfigured: Bool {
+        guard let info = Bundle.main.infoDictionary,
+              let feedURL = info["SUFeedURL"] as? String,
+              !feedURL.isEmpty else {
+            return false
+        }
+        return true
+    }
+
     public func start() {
-        controller.startUpdater()
+        guard isConfigured else { return }
+        if controller == nil {
+            controller = SPUStandardUpdaterController(
+                startingUpdater: false,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+        }
+        controller?.startUpdater()
     }
 
     public func checkForUpdates() {
-        controller.checkForUpdates(nil)
+        guard isConfigured else { return }
+        if controller == nil {
+            controller = SPUStandardUpdaterController(
+                startingUpdater: false,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+        }
+        controller?.checkForUpdates(nil)
     }
 }

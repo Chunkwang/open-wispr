@@ -64,3 +64,23 @@ export function mockEdit(instruction: string, selection: string): string {
   if (wanted.includes("professional")) return `Dear team, ${selection.trim()}`;
   return selection;
 }
+
+/**
+ * Deterministic local stand-in for the Claude Ask / vision endpoint.
+ */
+export function mockAsk(instruction: string, text?: string, title?: string, image?: string, uiTree?: string): string {
+  const wanted = instruction.toLowerCase();
+  if (wanted.includes("where")) {
+    const match = /where\s+(?:is|are)\s+(?:my\s+)?([^.?!]+)/i.exec(instruction);
+    const itemName = match ? match[1].trim() : "requested item";
+    return `Found "${itemName}" on screen. <box label="${itemName}">300,220,420,480</box>`;
+  }
+  if (text && text.trim().length > 0) {
+    return `Based on "${title ?? "window context"}": ${text.slice(0, 100)}`;
+  }
+  if (image) {
+    return `Analysis of screenshot for instruction: "${instruction}"`;
+  }
+  return `Answer to "${instruction}"`;
+}
+

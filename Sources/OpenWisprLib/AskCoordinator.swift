@@ -74,10 +74,18 @@ final class AskCoordinator {
         lock.unlock()
     }
 
+    /// - Parameter prefetchedSnapshot: A snapshot the caller already obtained
+    ///   *after* its own equivalent of this gate passed (the merged Context
+    ///   hotkey reads once to decide Edit-vs-Ask routing, then hands that same
+    ///   read in here instead of triggering a second Accessibility walk).
+    ///   `nil` (the default) makes this read for itself, after the gate below,
+    ///   exactly as before. Either way, the TOCTOU re-check against the
+    ///   frontmost app further down still runs before anything is sent.
     func process(
         instruction: String,
         mode currentMode: () -> RewriteMode,
         willAsk: @escaping () -> Void,
+        prefetchedSnapshot: ContextSnapshot? = nil,
         completion: @escaping (RewriteOutcome) -> Void
     ) {
         let mode = currentMode()
@@ -107,7 +115,12 @@ final class AskCoordinator {
         let frontmostAtStart = frontmostApp()
 
         Task {
-            let snapshot = await reader.readSnapshot()
+            let snapshot: ContextSnapshot
+            if let prefetchedSnapshot {
+                snapshot = prefetchedSnapshot
+            } else {
+                snapshot = await reader.readSnapshot()
+            }
 
             if snapshot.status == .secureField {
                 completion(RewriteOutcome(text: instruction, notice: "Cannot use Ask in a secure field.", rewritten: false, attempted: true))

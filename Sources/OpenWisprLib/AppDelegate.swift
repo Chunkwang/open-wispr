@@ -18,11 +18,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     private var editCoordinator: EditCoordinator!
     private var askCoordinator: AskCoordinator!
     
-    enum RecordingMode { case dictate, edit, ask }
+    enum RecordingMode { case dictate, edit, context }
     private var currentRecordingMode: RecordingMode = .dictate
     
     private var editHotkeyManager: HotkeyManager?
     private var askHotkeyManager: HotkeyManager?
+
     /// Sign-in hooks for the sign-in window and menu. Signing in or out lifts the
     /// rewrite coordinator's session-long stop. Main thread only.
     private(set) var authCoordinator: AuthCoordinator!
@@ -235,6 +236,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         
         askHotkeyManager?.stop()
         askHotkeyManager = nil
+        // Explicit opt-in only: enabling the agent-layer flag must not, by
+        // itself, start listening for a bare-modifier hotkey nobody chose.
+        // The founder sets `askHotkey` in config.json to turn this on.
         if let hk = config.askHotkey {
             let manager = HotkeyManager(
                 keyCode: hk.keyCode,
@@ -242,7 +246,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             )
             manager.start(
                 onKeyDown: { [weak self] in
-                    self?.currentRecordingMode = .ask
+                    self?.currentRecordingMode = .context
                     self?.handleKeyDown()
                 },
                 onKeyUp: { [weak self] in
@@ -341,6 +345,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         
         askHotkeyManager?.stop()
         askHotkeyManager = nil
+        // Explicit opt-in only: enabling the agent-layer flag must not, by
+        // itself, start listening for a bare-modifier hotkey nobody chose.
+        // The founder sets `askHotkey` in config.json to turn this on.
         if let hk = config.askHotkey {
             let manager = HotkeyManager(
                 keyCode: hk.keyCode,
@@ -348,7 +355,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             )
             manager.start(
                 onKeyDown: { [weak self] in
-                    self?.currentRecordingMode = .ask
+                    self?.currentRecordingMode = .context
                     self?.handleKeyDown()
                 },
                 onKeyUp: { [weak self] in
@@ -427,7 +434,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleRecordingStart() {
         statusBar.state = .recording
-        if currentRecordingMode == .ask {
+        if currentRecordingMode == .context {
             DispatchQueue.main.async { AskOverlayController.shared.show(state: .listening) }
         }
         do {
@@ -451,7 +458,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         guard let audioURL = recorder.stopRecording() else {
             RecordingCancellation.discardTrackedPartialRecording(&currentRecordingURL)
             statusBar.state = .idle
-            if currentRecordingMode == .ask {
+            if currentRecordingMode == .context {
                 DispatchQueue.main.async { AskOverlayController.shared.hide() }
             }
             return
@@ -486,25 +493,76 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                 // the device. It calls `completion` exactly once.
                 let mode = self.currentRecordingMode
                 DispatchQueue.main.async {
-                    if mode == .ask {
-                        self.statusBar.state = .idle
-                        self.statusBar.buildMenu()
-                        self.askCoordinator.process(
-                            instruction: text,
-                            mode: { self.config.rewriteMode },
-                            willAsk: { 
-                                DispatchQueue.main.async { AskOverlayController.shared.show(state: .processing) }
-                            },
-                            completion: { outcome in
-                                DispatchQueue.main.async {
-                                    if let notice = outcome.notice, !outcome.rewritten {
-                                        AskOverlayController.shared.show(state: .error(notice))
-                                    } else {
-                                        AskOverlayController.shared.show(state: .answered(outcome.text))
+                    if mode == .context {
+                        // Routing (Edit vs. Ask) needs to know whether there is a
+                        // selection, which needs a read — but that read must not
+                        // happen for its own sake. `agentLayerActive` mirrors the
+                        // first two checks EditGate/AskGate apply before consent
+                        // or sign-in are even considered (ContextConsent.swift):
+                        // if either is false, both coordinators' own `gate(mode)`
+                        // bounces this to the raw transcript with no read at all,
+                        // so there is nothing to look at yet. When it is true,
+                        // exactly one Accessibility read happens here, and that
+                        // same snapshot — not a second, independent read — is
+                        // handed to whichever coordinator gets chosen below.
+                        let agentLayerActive = self.config.isAgentLayerEnabled && self.config.rewriteMode == .auto
+                        Task {
+                            let snapshot = agentLayerActive
+                                ? await DefaultAccessibilityContextReader.system().readSnapshot()
+                                : nil
+                            let hasSelection = snapshot?.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+
+                            if hasSelection {
+                                self.statusBar.state = .idle
+                                self.statusBar.buildMenu()
+                                let ticket = self.sequencer.begin(raw: text)
+                                self.editCoordinator.process(
+                                    instruction: text,
+                                    mode: { self.config.rewriteMode },
+                                    willEdit: {},
+                                    prefetchedSnapshot: snapshot,
+                                    completion: { outcome in
+                                        DispatchQueue.main.async {
+                                            if outcome.rewritten {
+                                                self.lastRewritePair = (raw: text, rewritten: outcome.text)
+                                                self.statusBar.buildMenu()
+                                            }
+                                            self.sequencer.finish(ticket, outcome: outcome)
+                                        }
                                     }
+                                )
+                            } else {
+                                self.statusBar.state = .idle
+                                self.statusBar.buildMenu()
+
+                                let trimmedInstruction = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if trimmedInstruction.isEmpty {
+                                    let hotkeyDesc = self.config.askHotkey.map {
+                                        KeyCodes.describe(keyCode: $0.keyCode, modifiers: $0.modifiers)
+                                    } ?? "the Context hotkey"
+                                    AskOverlayController.shared.show(state: .error("No speech detected. Hold \(hotkeyDesc) and ask a question."))
+                                    return
                                 }
+
+                                self.askCoordinator.process(
+                                    instruction: trimmedInstruction,
+                                    mode: { self.config.rewriteMode },
+                                    willAsk: {
+                                        DispatchQueue.main.async { AskOverlayController.shared.show(state: .processing) }
+                                    },
+                                    prefetchedSnapshot: snapshot,
+                                    completion: { outcome in
+                                        DispatchQueue.main.async {
+                                            if let notice = outcome.notice, !outcome.rewritten {
+                                                AskOverlayController.shared.show(state: .error(notice))
+                                            } else {
+                                                AskOverlayController.shared.show(state: .answered(outcome.text))
+                                            }
+                                        }
+                                    }
+                                )
                             }
-                        )
+                        }
                         return
                     }
 

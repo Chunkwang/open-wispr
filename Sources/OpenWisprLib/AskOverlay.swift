@@ -36,7 +36,27 @@ public class AskOverlayController: @unchecked Sendable {
             window = panel
         }
         
-        let view = AskOverlayView(state: state, onClose: { [weak self] in
+        var effectiveState = state
+        if case .answered(let rawAnswer) = state {
+            let parseResult = BoundingBoxParser.parse(rawAnswer)
+            var cleanText = parseResult.cleanText
+            if cleanText.isEmpty {
+                if let firstLabel = parseResult.boxes.first?.label {
+                    cleanText = "Highlighted \(firstLabel) on screen."
+                } else if !parseResult.boxes.isEmpty {
+                    cleanText = "Highlighted element on screen."
+                } else {
+                    let trimmed = rawAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+                    cleanText = trimmed.isEmpty ? "No response text received." : trimmed
+                }
+            }
+            effectiveState = .answered(cleanText)
+            if !parseResult.boxes.isEmpty {
+                BoundingBoxOverlayController.shared.show(boxes: parseResult.boxes)
+            }
+        }
+        
+        let view = AskOverlayView(state: effectiveState, onClose: { [weak self] in
             DispatchQueue.main.async {
                 self?.hide()
             }
@@ -80,6 +100,7 @@ public class AskOverlayController: @unchecked Sendable {
     
     @MainActor
     public func hide() {
+        BoundingBoxOverlayController.shared.hide()
         window?.orderOut(nil)
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)

@@ -11,6 +11,22 @@ private final class FakeContextReader: AccessibilityContextReader, @unchecked Se
     func readSnapshot() async -> ContextSnapshot { snapshot }
 }
 
+/// Counts calls to `readSnapshot()`, so a test can prove a read did or did not
+/// happen instead of just reading the `prefetchedSnapshot ?? await reader...`
+/// line and trusting it. Used by the "exactly one read" tests below (the
+/// merged Context hotkey's whole justification for `prefetchedSnapshot`).
+private final class CountingContextReader: AccessibilityContextReader, @unchecked Sendable {
+    private let snapshot: ContextSnapshot
+    private let lock = NSLock()
+    private var _count = 0
+    init(_ snapshot: ContextSnapshot) { self.snapshot = snapshot }
+    func readSnapshot() async -> ContextSnapshot {
+        lock.lock(); _count += 1; lock.unlock()
+        return snapshot
+    }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+}
+
 private final class FakeReachability: NetworkReachability {
     let online: Bool
     init(online: Bool = true) { self.online = online }
@@ -110,6 +126,90 @@ final class EditCoordinatorTests: XCTestCase {
         let coordinator = makeCoordinator(snapshot: snapshot, editorResult: .success("Please make this more formal."), editorCalls: calls)
         let outcome = run(coordinator)
         XCTAssertEqual(calls.value, 1)
+        XCTAssertTrue(outcome.rewritten)
+    }
+
+    // MARK: - merged Context hotkey: `prefetchedSnapshot` must be the only read
+
+    /// When the gate itself refuses (mode is not `.auto`, mirroring
+    /// `agentLayerActive` being false in AppDelegate), no Accessibility read may
+    /// happen at all — not even the standalone Edit hotkey's own fallback read.
+    /// This was previously unverified: every other test above always passes a
+    /// gate of `{ $0 == .auto }` called with `.auto`, so the gate is always true
+    /// and the `else { await reader.readSnapshot() }` branch's *absence* under a
+    /// failing gate was never actually exercised.
+    func testGateFalseNeverReadsAccessibilitySnapshotEvenWithoutPrefetch() {
+        let snapshot = ContextSnapshot(
+            status: .ok, appName: "Notes", bundleID: "com.apple.Notes",
+            focusedRole: "AXTextArea", selectedText: "some selection"
+        )
+        let reader = CountingContextReader(snapshot)
+        let editorCalls = EditorCallCounter()
+        let coordinator = EditCoordinator(
+            gate: { _ in false }, // simulates agentLayerActive == false
+            makeReachability: { FakeReachability() },
+            makeEditor: { { _, _, _ in editorCalls.increment(); return .success("edited") } },
+            contextReader: reader
+        )
+        let outcome = run(coordinator)
+        XCTAssertEqual(reader.count, 0, "gate(mode) == false must short-circuit before any Accessibility read")
+        XCTAssertEqual(editorCalls.value, 0)
+        XCTAssertFalse(outcome.rewritten)
+        XCTAssertEqual(outcome.text, "make it formal")
+    }
+
+    /// When a snapshot is prefetched (the merged Context hotkey's own single
+    /// read, shared with Ask's routing decision), `EditCoordinator` must use it
+    /// as-is and never perform its own second, independent read.
+    func testPrefetchedSnapshotIsUsedWithoutAnySecondRead() {
+        let snapshot = ContextSnapshot(
+            status: .ok, appName: "Notes", bundleID: "com.apple.Notes", windowTitle: "Untitled",
+            focusedRole: "AXTextArea", selectedText: "make this more formal please"
+        )
+        // Deliberately a *different* snapshot than the one prefetched, so a pass
+        // here could only happen if the prefetched snapshot (not this reader's)
+        // was actually used.
+        let differentSnapshot = ContextSnapshot(status: .secureField, appName: "1Password", bundleID: "x", focusedRole: ContextSnapshot.secureRole, isSecureField: true)
+        let reader = CountingContextReader(differentSnapshot)
+        let editorCalls = EditorCallCounter()
+        let coordinator = EditCoordinator(
+            gate: { $0 == .auto },
+            makeReachability: { FakeReachability() },
+            makeEditor: { { _, _, _ in editorCalls.increment(); return .success("edited") } },
+            contextReader: reader
+        )
+        let expectation = expectation(description: "completion")
+        var result: RewriteOutcome!
+        coordinator.process(
+            instruction: "make it formal",
+            mode: { .auto },
+            willEdit: {},
+            prefetchedSnapshot: snapshot,
+            completion: { outcome in result = outcome; expectation.fulfill() }
+        )
+        wait(for: [expectation], timeout: 2)
+        XCTAssertEqual(reader.count, 0, "a prefetched snapshot must mean the coordinator's own reader is never invoked")
+        XCTAssertEqual(editorCalls.value, 1, "the prefetched (non-secure) snapshot's selection should have reached the editor")
+        XCTAssertTrue(result.rewritten)
+    }
+
+    /// Without a prefetched snapshot (the standalone Edit hotkey's call shape),
+    /// the coordinator must still read for itself exactly once.
+    func testNoPrefetchedSnapshotReadsExactlyOnce() {
+        let snapshot = ContextSnapshot(
+            status: .ok, appName: "Notes", bundleID: "com.apple.Notes", windowTitle: "Untitled",
+            focusedRole: "AXTextArea", selectedText: "make this more formal please"
+        )
+        let reader = CountingContextReader(snapshot)
+        let editorCalls = EditorCallCounter()
+        let coordinator = EditCoordinator(
+            gate: { $0 == .auto },
+            makeReachability: { FakeReachability() },
+            makeEditor: { { _, _, _ in editorCalls.increment(); return .success("edited") } },
+            contextReader: reader
+        )
+        let outcome = run(coordinator)
+        XCTAssertEqual(reader.count, 1)
         XCTAssertTrue(outcome.rewritten)
     }
 }

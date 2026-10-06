@@ -65,10 +65,17 @@ final class EditCoordinator {
         lock.unlock()
     }
 
+    /// - Parameter prefetchedSnapshot: A snapshot the caller already obtained
+    ///   *after* its own equivalent of this gate passed (the merged Context
+    ///   hotkey reads once to decide Edit-vs-Ask routing, then hands that same
+    ///   read in here instead of triggering a second Accessibility walk).
+    ///   `nil` (the default, and what the standalone Edit hotkey passes) makes
+    ///   this read for itself, after the gate below, exactly as before.
     func process(
         instruction: String,
         mode currentMode: () -> RewriteMode,
         willEdit: @escaping () -> Void,
+        prefetchedSnapshot: ContextSnapshot? = nil,
         completion: @escaping (RewriteOutcome) -> Void
     ) {
         let mode = currentMode()
@@ -92,7 +99,12 @@ final class EditCoordinator {
         let reader = self.contextReader
 
         Task {
-            let snapshot = await reader.readSnapshot()
+            let snapshot: ContextSnapshot
+            if let prefetchedSnapshot {
+                snapshot = prefetchedSnapshot
+            } else {
+                snapshot = await reader.readSnapshot()
+            }
 
             if snapshot.status == .excludedApp {
                 completion(RewriteOutcome(text: instruction, notice: "Edit is disabled for this app to protect your privacy.", rewritten: false, attempted: true))

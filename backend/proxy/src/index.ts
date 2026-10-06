@@ -1,6 +1,10 @@
 import type { Env, Tier } from "./types";
 import {
   MAX_BODY_BYTES,
+  MAX_ASK_BODY_BYTES,
+  MAX_ASK_INSTRUCTION_CHARS,
+  MAX_ASK_TEXT_CHARS,
+  MAX_ASK_UI_TREE_CHARS,
   MAX_EDIT_CONTEXT_APP_CHARS,
   MAX_EDIT_CONTEXT_WINDOW_TITLE_CHARS,
   MAX_EDIT_INSTRUCTION_CHARS,
@@ -11,9 +15,9 @@ import {
 import { AuthUnavailableError, MisconfiguredError, authenticate, type AuthedUser } from "./auth";
 import { getUserTier } from "./tier";
 import { checkAndConsumeQuota, type RateLimitResult } from "./rateLimit";
-import { editSelection, rewriteTranscript } from "./claude";
+import { askQuestion, editSelection, rewriteTranscript } from "./claude";
 import { preserveEdgeWhitespace, type EditContext } from "./editPrompt";
-import { chooseProvider, mockEdit, mockRewrite } from "./llmProvider";
+import { chooseProvider, mockAsk, mockEdit, mockRewrite } from "./llmProvider";
 import { placeholderStripeConfigOffLoopback } from "./hostGuard";
 import { readBodyCapped } from "./httpBody";
 import { handleEvents } from "./events";
@@ -34,9 +38,13 @@ export default {
     if (url.pathname === "/v1/edit" && request.method === "POST") {
       return handleProtected(request, env, url.hostname, editEndpoint);
     }
+    if (url.pathname === "/v1/ask" && request.method === "POST") {
+      return handleProtected(request, env, url.hostname, askEndpoint, MAX_ASK_BODY_BYTES);
+    }
     if (url.pathname === "/v1/events" && request.method === "POST") {
       return handleEvents(request, env, url.hostname);
     }
+
     if (url.pathname === "/v1/referral/redeem" && request.method === "POST") {
       return handleReferralRedeem(request, env, url.hostname);
     }
@@ -173,12 +181,65 @@ const editEndpoint: Endpoint<EditInput> = {
   },
 };
 
-async function handleProtected<I>(request: Request, env: Env, hostname: string, endpoint: Endpoint<I>): Promise<Response> {
+interface AskInput {
+  instruction: string;
+  text?: string;
+  title?: string;
+  image?: string;
+  uiTree?: string;
+}
+
+const askEndpoint: Endpoint<AskInput> = {
+  event: "ask",
+  bodyTooLargeError: "body_too_large",
+  validate(parsed) {
+    const { instruction, text, title, image, uiTree } = parsed as {
+      instruction?: unknown;
+      text?: unknown;
+      title?: unknown;
+      image?: unknown;
+      uiTree?: unknown;
+    };
+    if (typeof instruction !== "string" || instruction.trim().length === 0) return bad("missing_instruction", 400, "missing instruction");
+    if (codePoints(instruction) > MAX_ASK_INSTRUCTION_CHARS) return bad("instruction_too_long", 413, "instruction_too_long");
+    if (typeof text === "string" && codePoints(text) > MAX_ASK_TEXT_CHARS) return bad("text_too_long", 413, "text_too_long");
+    // Base64 is ASCII-only, so the overall 5 MB body cap already bounds how much a client can send;
+    // this only rejects a request that could never succeed (malformed base64) before it reaches a
+    // paid provider call and consumes the user's quota. Not a format/magic-byte check: whether the
+    // bytes are actually a JPEG is left to the provider, matching askQuestion's hardcoded media type.
+    if (typeof image === "string" && image.length > 0 && (image.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(image))) {
+      return bad("invalid_body", 400, "invalid request body");
+    }
+
+    return {
+      ok: true,
+      input: {
+        instruction,
+        text: typeof text === "string" ? text : undefined,
+        title: typeof title === "string" ? truncate(title, MAX_EDIT_CONTEXT_WINDOW_TITLE_CHARS) : undefined,
+        image: typeof image === "string" ? image : undefined,
+        uiTree: typeof uiTree === "string" ? truncate(uiTree, MAX_ASK_UI_TREE_CHARS) : undefined,
+      },
+    };
+  },
+  tierRequiredError: "ask requires the Pro tier",
+  providerFailedKind: "ask_failed",
+  providerFailedError: "ask failed",
+  async run({ instruction, text, title, image, uiTree }, env, hostname) {
+    const answer =
+      chooseProvider(env, hostname) === "mock"
+        ? mockAsk(instruction, text, title, image, uiTree)
+        : await askQuestion(instruction, text, title, image, uiTree, env);
+    return { answer };
+  },
+};
+
+async function handleProtected<I>(request: Request, env: Env, hostname: string, endpoint: Endpoint<I>, maxBodyBytes: number = MAX_BODY_BYTES): Promise<Response> {
   const startedAt = Date.now();
   const trace: RequestTrace = { userHash: null, kind: null };
   let response: Response;
   try {
-    response = await serve(request, env, hostname, trace, endpoint);
+    response = await serve(request, env, hostname, trace, endpoint, maxBodyBytes);
   } catch {
     // Anything unexpected: a fixed body, never a stack trace or upstream detail.
     response = reject(trace, "internal_error", 500, "internal_error");
@@ -187,7 +248,7 @@ async function handleProtected<I>(request: Request, env: Env, hostname: string, 
   return response;
 }
 
-async function serve<I>(request: Request, env: Env, hostname: string, trace: RequestTrace, endpoint: Endpoint<I>): Promise<Response> {
+async function serve<I>(request: Request, env: Env, hostname: string, trace: RequestTrace, endpoint: Endpoint<I>, maxBodyBytes: number = MAX_BODY_BYTES): Promise<Response> {
   // authenticate() itself refuses to serve when verification is misconfigured (an unknown
   // JWT_VERIFY_MODE, a deployed Worker holding a local-dev or too-short JWT secret, or, in
   // jwks mode, a JWKS URL that is not https on the project's own origin) before it looks at
@@ -213,7 +274,8 @@ async function serve<I>(request: Request, env: Env, hostname: string, trace: Req
 
   // Validate the body before any upstream call or quota use: a malformed or
   // oversized request must not cost the user allowance or us a lookup.
-  const body = await readBodyCapped(request, MAX_BODY_BYTES);
+  const body = await readBodyCapped(request, maxBodyBytes);
+
   if (body.kind === "too_large") return reject(trace, "body_too_large", 413, endpoint.bodyTooLargeError);
   if (body.kind === "bad_encoding") return reject(trace, "invalid_body", 400, "invalid request body");
 

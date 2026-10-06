@@ -51,6 +51,7 @@ final class ProductInfoTests: XCTestCase {
         // Stored tokens live under this exact service name. Renaming the bundle ID
         // changes it and orphans them, which is free before sign-in exists (Day 4)
         // and a migration afterwards. This test makes that a deliberate step.
-        XCTAssertEqual(Keychain.service, "com.goprimy.dictation-wip.auth")
+        XCTAssertEqual(Keychain.service, "com.murmur.app.auth")
     }
 }
+

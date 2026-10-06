@@ -58,18 +58,20 @@ class HotkeyManager {
     private func handleEvent(_ event: NSEvent) {
         if isModifierOnlyKey(keyCode) {
             guard event.type == .flagsChanged else { return }
-            guard event.keyCode == keyCode else { return }
 
-            if modifierPressed {
-                modifierPressed = false
-                onKeyUp?()
-            } else {
+            let targetPressed = isTargetModifierPressed(event)
+
+            if targetPressed && !modifierPressed {
+                guard matchesModifierKey(event.keyCode) || requiredModifiers != 0 else { return }
                 if requiredModifiers != 0 {
                     let currentMods = UInt64(event.modifierFlags.rawValue) & 0x00FF0000
                     guard currentMods & requiredModifiers == requiredModifiers else { return }
                 }
                 modifierPressed = true
                 onKeyDown?()
+            } else if !targetPressed && modifierPressed {
+                modifierPressed = false
+                onKeyUp?()
             }
         } else {
             guard event.keyCode == keyCode else { return }
@@ -87,5 +89,33 @@ class HotkeyManager {
 
     private func isModifierOnlyKey(_ code: UInt16) -> Bool {
         return [54, 55, 56, 58, 59, 60, 61, 62, 63].contains(code)
+    }
+
+    private func matchesModifierKey(_ eventKeyCode: UInt16) -> Bool {
+        switch keyCode {
+        case 58, 61: return eventKeyCode == 58 || eventKeyCode == 61 // Option
+        case 54, 55: return eventKeyCode == 54 || eventKeyCode == 55 // Command
+        case 59, 62: return eventKeyCode == 59 || eventKeyCode == 62 // Control
+        case 56, 60: return eventKeyCode == 56 || eventKeyCode == 60 // Shift
+        case 63: return eventKeyCode == 63                            // Fn / Globe
+        default: return eventKeyCode == keyCode
+        }
+    }
+
+    private func isTargetModifierPressed(_ event: NSEvent) -> Bool {
+        switch keyCode {
+        case 58, 61:
+            return event.modifierFlags.contains(.option)
+        case 54, 55:
+            return event.modifierFlags.contains(.command)
+        case 59, 62:
+            return event.modifierFlags.contains(.control)
+        case 56, 60:
+            return event.modifierFlags.contains(.shift)
+        case 63:
+            return event.modifierFlags.contains(.function)
+        default:
+            return false
+        }
     }
 }
