@@ -80,6 +80,15 @@ final class AskCoordinatorTests: XCTestCase {
 
     // MARK: - finding 4: secureEventInput must bail out before any capture
 
+    /// Unlike `EditCoordinator`'s equivalent outcome, this one is never handed
+    /// to `DictationSequencer` by its only current caller (AppDelegate's merged
+    /// Context hotkey, no-selection branch hands it straight to
+    /// `AskOverlayController`, which never calls `env.insert` or
+    /// `copyToPasteboard`), so there is no sequencer-level test to add here the
+    /// way there is for Edit: nothing is pasted either way today. `secure` is
+    /// still asserted because it is part of `RewriteOutcome`'s contract
+    /// regardless of which coordinator fills it in, and is what would make a
+    /// future sequencer-routed Ask path safe too.
     func testSecureEventInputBailsOutWithoutCallingTheAsker() {
         let calls = AskerCallCounter()
         let snapshot = ContextSnapshot(status: .secureEventInput, appName: "Terminal", bundleID: "com.apple.Terminal")
@@ -87,6 +96,7 @@ final class AskCoordinatorTests: XCTestCase {
         let outcome = run(coordinator)
         XCTAssertEqual(calls.value, 0)
         XCTAssertEqual(outcome.notice, "Cannot use Ask while secure keyboard input is on.")
+        XCTAssertTrue(outcome.secure, "secureEventInput must mark the outcome secure")
     }
 
     func testSecureFieldBailsOutWithoutCallingTheAsker() {
@@ -96,6 +106,7 @@ final class AskCoordinatorTests: XCTestCase {
         let outcome = run(coordinator)
         XCTAssertEqual(calls.value, 0)
         XCTAssertEqual(outcome.notice, "Cannot use Ask in a secure field.")
+        XCTAssertTrue(outcome.secure, "secureField must mark the outcome secure")
     }
 
     func testExcludedAppBailsOutWithoutCallingTheAsker() {

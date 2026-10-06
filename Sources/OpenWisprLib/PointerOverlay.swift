@@ -69,12 +69,11 @@ public class PointerOverlayController: @unchecked Sendable {
     }
     
     private func cgRectToNSWindowRect(_ cgRect: CGRect) -> NSRect {
-        guard let primaryScreen = NSScreen.screens.first else { return cgRect }
-        let screenHeight = primaryScreen.frame.height
         // In accessibility (CG) coordinates, (0,0) is top-left of primary screen.
         // In NSWindow coordinates, (0,0) is bottom-left of primary screen.
-        let windowY = screenHeight - cgRect.minY - cgRect.height
-        return NSRect(x: cgRect.minX, y: windowY, width: cgRect.width, height: cgRect.height)
+        // `AXTreeWalker.axRectToScreenRect` does this same flip for the Ask
+        // bounding-box overlay; shared here so the math lives in one place.
+        AXTreeWalker.axRectToScreenRect(cgRect)
     }
 }
 

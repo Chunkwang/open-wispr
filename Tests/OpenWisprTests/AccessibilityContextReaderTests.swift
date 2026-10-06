@@ -160,4 +160,121 @@ final class AccessibilityContextReaderTests: XCTestCase {
         XCTAssertEqual(snap.windowTitle, "My Note")
         XCTAssertEqual(snap.selectedText, "some text")
     }
+
+    // MARK: - captureSecureInputStatus (the plain-dictation path's narrow check)
+    //
+    // Added alongside the Day 3 hardening pass above: plain dictation (unlike
+    // Ask/Edit, which already read a full `ContextSnapshot`) had zero secure-field
+    // awareness. This never reads a window title or selected text, for any
+    // field, secure or not — asserted below by checking `stringCalls` directly.
+
+    func testSecureEventInputIsReportedEvenWhenNotTrusted() {
+        let p = provider()
+        p.trusted = false
+        p.secureEventInput = true
+        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .secureEventInput)
+        XCTAssertEqual(p.focusedElementCalls, 0, "secure keyboard input needs no Accessibility call at all")
+    }
+
+    func testNotTrustedWithNoSecureEventInputIsNotSecure() {
+        let p = provider()
+        p.trusted = false
+        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .notSecure)
+    }
+
+    func testSecureRoleIsReportedAsSecureField() {
+        let p = provider(role: ContextSnapshot.secureRole)
+        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .secureField)
+        XCTAssertFalse(p.stringCalls.contains(.title))
+        XCTAssertFalse(p.stringCalls.contains(.selectedText))
+    }
+
+    func testRoleDescriptionSayingPasswordIsReportedAsSecureField() {
+        let p = provider(role: "AXTextField", roleDescription: "password field")
+        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .secureField)
+    }
+
+    func testOrdinaryFieldIsNotSecureAndNeverReadsTitleOrSelection() {
+        let p = provider(role: "AXTextField", title: "My Note", selection: "some text")
+        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .notSecure)
+        XCTAssertFalse(p.stringCalls.contains(.title), "the narrow check must never ask for the title")
+        XCTAssertFalse(p.stringCalls.contains(.selectedText), "the narrow check must never ask for the selection")
+    }
+
+    func testUnreadableFocusedElementIsNotSecureNotAFailure() {
+        let p = provider()
+        p.focused = .failure(.cannotComplete)
+        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .notSecure)
+    }
+
+    func testNoFrontmostAppIsNotSecure() {
+        let p = provider()
+        p.app = nil
+        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .notSecure)
+    }
+
+    // MARK: - checkSecureInput (the async wrapper, end to end)
+
+    func testCheckSecureInputDeliversTheSameAnswerAsTheStaticCheck() {
+        let p = provider(role: ContextSnapshot.secureRole)
+        let reader = DefaultAccessibilityContextReader(provider: p)
+        let expectation = expectation(description: "checkSecureInput completes")
+        reader.checkSecureInput { status in
+            XCTAssertEqual(status, .secureField)
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1)
+    }
+
+    func testCheckSecureInputOnAnOrdinaryFieldIsNotSecure() {
+        let p = provider(role: "AXTextField")
+        let reader = DefaultAccessibilityContextReader(provider: p)
+        let expectation = expectation(description: "checkSecureInput completes")
+        reader.checkSecureInput { status in
+            XCTAssertEqual(status, .notSecure)
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1)
+    }
+
+    // MARK: - QA acceptance pass (Day 3 secure-field fix), angle 4: plain
+    // dictation must never block indefinitely on this check. `FakeAXProvider`'s
+    // calls are all synchronous and instantaneous, so none of the tests above
+    // can tell whether `checkSecureInput` actually fails open on a hung app —
+    // only that it answers correctly when the app answers instantly. This
+    // provider blocks past the reader's deadline to prove the fail-open path
+    // for real, not just by reading the source.
+
+    private final class HangingAXProvider: AXProvider, @unchecked Sendable {
+        let hang: TimeInterval
+        init(hang: TimeInterval) { self.hang = hang }
+        func isProcessTrusted() -> Bool { Thread.sleep(forTimeInterval: hang); return true }
+        func isSecureEventInputEnabled() -> Bool { false }
+        func frontmostApplication() -> FrontmostApp? { FrontmostApp(name: "Notes", bundleID: "com.apple.Notes", pid: 1) }
+        func focusedElement(pid: Int32) -> AXRead<AXElementRef> { .value(FakeElement(1)) }
+        func focusedWindow(pid: Int32) -> AXRead<AXElementRef> { .value(FakeElement(2)) }
+        func string(_ attribute: AXTextAttribute, of element: AXElementRef) -> AXRead<String> { .value("AXTextField") }
+        func isSameElement(_ a: AXElementRef, _ b: AXElementRef) -> Bool { true }
+    }
+
+    func testCheckSecureInputFailsOpenToNotSecureWhenTheAppHangsPastTheDeadline() {
+        // isProcessTrusted() alone blocks for 10x the reader's deadline, well
+        // past it, simulating an unresponsive app. If this ever blocked the
+        // completion on the real call returning instead of firing at the
+        // deadline, this test would time out at `wait`'s own 1 s limit instead
+        // of completing near `deadline`.
+        let deadline: TimeInterval = 0.05
+        let p = HangingAXProvider(hang: deadline * 10)
+        let reader = DefaultAccessibilityContextReader(provider: p, deadline: deadline)
+        let expectation = expectation(description: "checkSecureInput fails open at the deadline")
+        let start = Date()
+        var elapsed: TimeInterval = -1
+        reader.checkSecureInput { status in
+            elapsed = Date().timeIntervalSince(start)
+            XCTAssertEqual(status, .notSecure, "an inconclusive read on a hung app must never be treated as secure")
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1)
+        XCTAssertLessThan(elapsed, 0.5, "the completion must fire at about the reader's deadline (\(deadline)s), not wait for the hung call")
+    }
 }

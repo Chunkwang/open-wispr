@@ -122,13 +122,26 @@ final class AskCoordinator {
                 snapshot = await reader.readSnapshot()
             }
 
+            // `secure: true` mirrors the same flag on `EditCoordinator`'s bailouts
+            // (see its comment): the field is part of `RewriteOutcome`'s contract
+            // regardless of which coordinator fills it in, and must be set
+            // whenever the context is secure even though Ask's only current
+            // caller (AppDelegate's merged Context hotkey, no-selection branch)
+            // hands this outcome straight to `AskOverlayController` rather than to
+            // `DictationSequencer` — it never calls `env.insert` or
+            // `copyToPasteboard` at all today, so nothing is pasted either way,
+            // and the `notice` string below (unlike Edit's) is shown verbatim,
+            // never overwritten by `deliver()`'s `DictationNotice.secureInput`.
+            // It correctly says nothing about the clipboard, because nothing is
+            // copied there on this path. If Ask is ever routed through the
+            // sequencer instead, this flag is what will make that path safe too.
             if snapshot.status == .secureField {
-                completion(RewriteOutcome(text: instruction, notice: "Cannot use Ask in a secure field.", rewritten: false, attempted: true))
+                completion(RewriteOutcome(text: instruction, notice: "Cannot use Ask in a secure field.", rewritten: false, attempted: true, secure: true))
                 return
             }
 
             if snapshot.status == .secureEventInput {
-                completion(RewriteOutcome(text: instruction, notice: "Cannot use Ask while secure keyboard input is on.", rewritten: false, attempted: true))
+                completion(RewriteOutcome(text: instruction, notice: "Cannot use Ask while secure keyboard input is on.", rewritten: false, attempted: true, secure: true))
                 return
             }
 
@@ -158,9 +171,20 @@ final class AskCoordinator {
             }
 
             var processedImage: ProcessedImage? = nil
-            if #available(macOS 14.0, *) {
-                if let cgImage = try? await ScreenCapturer.captureMainDisplay() {
-                    processedImage = try? await ImageProcessor.process(cgImage: cgImage)
+            // The window this screenshot is scoped to, in AppKit/NSScreen
+            // coordinates, carried through to the final outcome so the
+            // bounding-box overlay (the model's <box> tags are normalized
+            // 0-1000 against whatever image was sent) can place a box inside
+            // this window rather than somewhere on the full display.
+            var capturedWindowFrame: CGRect? = nil
+            if #available(macOS 14.0, *), let pid = frontmostAtStart?.pid {
+                // Read now, before the capture, so the window being rasterized
+                // and the window this frame describes are the one the gate
+                // above already checked — not whatever is frontmost later.
+                let axWindowFrame = AXTreeWalker.frontmostWindowFrame(expectedPID: pid)
+                if let capture = try? await ScreenCapturer.captureFrontmostWindow(pid: pid, windowFrame: axWindowFrame) {
+                    processedImage = try? await ImageProcessor.process(cgImage: capture.image)
+                    capturedWindowFrame = AXTreeWalker.axRectToScreenRect(capture.frame)
                 }
             }
 
@@ -233,7 +257,9 @@ final class AskCoordinator {
                 }
             }
             
-            completion(RewriteCoordinator.outcome(for: finalResult, raw: instruction))
+            var outcome = RewriteCoordinator.outcome(for: finalResult, raw: instruction)
+            outcome.capturedWindowFrame = capturedWindowFrame
+            completion(outcome)
         }
     }
 

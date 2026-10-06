@@ -46,6 +46,57 @@ public final class AXTreeWalker {
     /// pipeline uses for a single-line label (`ContextSnapshot.maxWindowTitleScalars`).
     static let maxNodeTextScalars = ContextSnapshot.maxWindowTitleScalars
 
+    /// The frontmost window's own on-screen frame (position and size), in
+    /// Accessibility/Quartz screen coordinates: origin at the top-left of the
+    /// primary display, Y increasing downward. This is the same convention
+    /// `AXElementNode.frame` already uses and the one `SCWindow.frame`
+    /// (ScreenCaptureKit) reports, so a caller matching this frame against
+    /// `SCShareableContent.current.windows` compares like with like, with no
+    /// conversion needed. A caller placing something back on screen with
+    /// AppKit (an `NSPanel`, `NSScreen.frame`) must convert with
+    /// `axRectToScreenRect` first — see its doc comment.
+    ///
+    /// Applies the same permission check `walkFrontmostWindow` does
+    /// (`isPermittedToWalk`): `nil` for the wrong app, an excluded app, no
+    /// focused window, or no readable frame. Does not walk the tree or read
+    /// any element's title or value.
+    public static func frontmostWindowFrame(expectedPID: Int32) -> CGRect? {
+        frontmostWindowFrame(expectedPID: expectedPID, exclusions: ExcludedApps())
+    }
+
+    /// Test-facing overload, matching `walkFrontmostWindow`'s pair: `ExcludedApps`
+    /// is internal, so it cannot appear in the public signature above.
+    static func frontmostWindowFrame(expectedPID: Int32, exclusions: ExcludedApps) -> CGRect? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        guard isPermittedToWalk(app: FrontmostAppInfo(app), expectedPID: expectedPID, exclusions: exclusions) else { return nil }
+
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var frontWindow: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &frontWindow)
+        guard error == .success, let window = frontWindow else { return nil }
+        let axWindow = window as! AXUIElement
+
+        return getFrame(element: axWindow)
+    }
+
+    /// Converts a frame in Accessibility/Quartz screen coordinates (origin
+    /// top-left of the primary display, Y increasing downward — what
+    /// `frontmostWindowFrame` and `AXElementNode.frame` return) to AppKit/
+    /// `NSScreen` coordinates (origin bottom-left, Y increasing upward), the
+    /// convention `NormalizedBox.rect(in:)` and `NSScreen.frame` itself use.
+    /// Same flip `PointerOverlayController` already applies to an element
+    /// frame, pulled out here so both call sites share one piece of math.
+    /// Assumes the primary display's origin coincides with AX's global origin
+    /// (true for the common case; a window on a secondary display above or
+    /// left of the primary one is the known limit, same as the existing
+    /// pointer overlay).
+    public static func axRectToScreenRect(_ axRect: CGRect) -> CGRect {
+        guard let primaryScreen = NSScreen.screens.first else { return axRect }
+        let screenHeight = primaryScreen.frame.height
+        let y = screenHeight - axRect.minY - axRect.height
+        return CGRect(x: axRect.minX, y: y, width: axRect.width, height: axRect.height)
+    }
+
     /// Walks the accessibility tree of the frontmost window up to the given limits.
     ///
     /// This is a second, independent line of defense on top of whatever the

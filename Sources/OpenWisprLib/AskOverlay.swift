@@ -14,8 +14,13 @@ public class AskOverlayController: @unchecked Sendable {
     private var window: NSPanel?
     private var eventMonitor: Any?
     
+    /// - Parameter windowFrame: the on-screen frame (AppKit/`NSScreen`
+    ///   coordinates) of the window Ask's screenshot was scoped to, when there
+    ///   was one (`RewriteOutcome.capturedWindowFrame`). Used only for
+    ///   `.answered`, to place any `<box>` tag inside that window rather than
+    ///   guessing at the full display under the cursor.
     @MainActor
-    public func show(state: AskOverlayState) {
+    public func show(state: AskOverlayState, windowFrame: CGRect? = nil) {
         if state == .hidden {
             hide()
             return
@@ -52,7 +57,7 @@ public class AskOverlayController: @unchecked Sendable {
             }
             effectiveState = .answered(cleanText)
             if !parseResult.boxes.isEmpty {
-                BoundingBoxOverlayController.shared.show(boxes: parseResult.boxes)
+                BoundingBoxOverlayController.shared.show(boxes: parseResult.boxes, screenFrame: windowFrame)
             }
         }
         

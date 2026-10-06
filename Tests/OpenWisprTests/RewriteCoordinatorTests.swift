@@ -558,6 +558,45 @@ final class RewriteCoordinatorTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
+    // MARK: - secureDictateOutcome: the pre-network bailout for plain dictation
+    //
+    // AppDelegate's dictate branch must call this BEFORE `process`, never after,
+    // so a secure field's transcript is never sent to rewrite in the first
+    // place (not just kept from being pasted). These tests pin the pure
+    // decision so that contract cannot regress silently.
+
+    func testSecureDictateOutcomeIsNilWhenNotSecureSoTheCallerProceedsToProcess() {
+        XCTAssertNil(RewriteCoordinator.secureDictateOutcome(for: .notSecure, transcript: "hello"))
+    }
+
+    func testSecureDictateOutcomeForASecureFieldNeverAttemptsAndIsMarkedSecure() {
+        let outcome = RewriteCoordinator.secureDictateOutcome(for: .secureField, transcript: "my password is hunter2")
+        XCTAssertEqual(outcome, RewriteOutcome(
+            text: "my password is hunter2", notice: nil, rewritten: false, attempted: false, secure: true
+        ))
+    }
+
+    func testSecureDictateOutcomeForSecureEventInputNeverAttemptsAndIsMarkedSecure() {
+        let outcome = RewriteCoordinator.secureDictateOutcome(for: .secureEventInput, transcript: "sudo password")
+        XCTAssertEqual(outcome, RewriteOutcome(
+            text: "sudo password", notice: nil, rewritten: false, attempted: false, secure: true
+        ))
+    }
+
+    /// The bug this fixed: calling `process` first and only gating the paste on
+    /// `secure` afterwards still sends the transcript to the network. Proving
+    /// `secureDictateOutcome` is non-nil for every non-`.notSecure` status, and
+    /// that the AppDelegate call site returns immediately on a non-nil result
+    /// without ever constructing a `process` call, is what keeps that from
+    /// coming back. (The call-site wiring itself is exercised by hand: no fake
+    /// `RewriteCoordinator` exists to intercept `process`, and adding one only
+    /// to prove a `return` statement runs would not catch more than this does.)
+    func testEveryNonNotSecureStatusProducesABailoutOutcome() {
+        for status: SecureInputCheck in [.secureField, .secureEventInput] {
+            XCTAssertNotNil(RewriteCoordinator.secureDictateOutcome(for: status, transcript: "x"))
+        }
+    }
+
     func testTheProductionGateSeesTheModeAtProcessTime() {
         let probe = Probe()
         let coordinator = productionCoordinator(probe: probe, consented: true, hasToken: true)

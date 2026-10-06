@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import OpenWisprLib
 
 /// Day 3 hardening pass (security review finding 1): `AXTreeWalker` used to send
@@ -92,5 +93,42 @@ final class AXTreeWalkerTests: XCTestCase {
 
     func testWhitespaceOnlyGivesNil() {
         XCTAssertNil(AXTreeWalker.cleanedNodeText("   "))
+    }
+
+    // MARK: - axRectToScreenRect (privacy fix: Ask's screenshot is now scoped
+    // to the frontmost window, found via its AX frame — this is the flip that
+    // turns that AX-coordinate frame into the AppKit-coordinate frame
+    // `NormalizedBox.rect(in:)` needs to place a `<box>` tag correctly; see
+    // `BoundingBoxOverlayTests.testRectConversionForWindowNotAtDisplayOrigin`
+    // for the other half of this fix)
+
+    func testAxRectToScreenRectFlipsYAroundPrimaryScreenHeight() throws {
+        guard let screenHeight = NSScreen.screens.first?.frame.height else {
+            throw XCTSkip("No screen available to this test process")
+        }
+        // A window at AX position (100, 50) — 50 points down from the top —
+        // sized 200x80.
+        let axRect = CGRect(x: 100, y: 50, width: 200, height: 80)
+        let screenRect = AXTreeWalker.axRectToScreenRect(axRect)
+
+        XCTAssertEqual(screenRect.origin.x, 100, "x is unaffected by the flip")
+        XCTAssertEqual(screenRect.width, 200)
+        XCTAssertEqual(screenRect.height, 80)
+        // Bottom-left-origin y is measured from the screen's bottom, so the
+        // window's bottom edge (minY + height, in AX's top-down terms) is
+        // what ends up at the new origin.
+        XCTAssertEqual(screenRect.origin.y, screenHeight - 50 - 80)
+    }
+
+    func testAxRectToScreenRectIsItsOwnInverse() throws {
+        guard NSScreen.screens.first != nil else {
+            throw XCTSkip("No screen available to this test process")
+        }
+        // The same flip converts AX -> AppKit and AppKit -> AX (both systems
+        // disagree only about which edge y=0 means), so applying it twice
+        // must return the original rect.
+        let original = CGRect(x: 400, y: 200, width: 1000, height: 700)
+        let roundTripped = AXTreeWalker.axRectToScreenRect(AXTreeWalker.axRectToScreenRect(original))
+        XCTAssertEqual(roundTripped, original)
     }
 }

@@ -76,6 +76,49 @@ final class TextInserterTests: XCTestCase {
         XCTAssertEqual(writeCountBeforeRestore, writeCountAfterRestore, "Restore action should be skipped if pasteboard changed")
     }
 
+    // The `token` parameter is for the local latency-timing log only (see
+    // DictationTiming.swift). It must never affect insertion behavior, and
+    // omitting it (the default) or passing nil/empty must not throw or crash.
+    func testInsertWithNilTokenBehavesLikeNoToken() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+        let scheduler = CapturingScheduler()
+        let inserter = makeInserter(pasteboard: pasteboard, scheduler: scheduler)
+
+        inserter.insert(text: "new transcription", token: nil)
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "new transcription")
+    }
+
+    func testInsertWithEmptyTokenDoesNotCrash() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+        let scheduler = CapturingScheduler()
+        let inserter = makeInserter(pasteboard: pasteboard, scheduler: scheduler)
+
+        inserter.insert(text: "new transcription", token: "")
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "new transcription")
+    }
+
+    func testInsertWithRealTokenDoesNotChangeInsertedText() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+        let scheduler = CapturingScheduler()
+        let inserter = makeInserter(pasteboard: pasteboard, scheduler: scheduler)
+
+        inserter.insert(text: "new transcription", token: DictationTiming.newToken())
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "new transcription")
+    }
+
+    func testInsertWithEmptyTextAndTokenDoesNotCrash() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+        let scheduler = CapturingScheduler()
+        let inserter = makeInserter(pasteboard: pasteboard, scheduler: scheduler)
+
+        inserter.insert(text: "", token: "abc123")
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "")
+    }
+
     private func makeInserter(
         pasteboard: FakePasteboard,
         scheduler: CapturingScheduler,

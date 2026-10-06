@@ -46,7 +46,7 @@ Every outbound connection the client makes, with the file that makes it:
 | 3 | **Supabase token refresh** | Your Supabase project | Refresh token | When access token nears expiry | [`AuthService.swift`](Sources/OpenWisprLib/AuthService.swift) |
 | 4 | **`POST /v1/rewrite`** | Our Cloudflare Worker proxy | Transcript text only | After dictation, if Rewrite is on + consented + signed in | [`RewritePipeline.swift`](Sources/OpenWisprLib/RewritePipeline.swift) |
 | 5 | **`POST /v1/edit`** | Our Cloudflare Worker proxy | Selected text + voice instruction + window title | After Edit hotkey, if consented + signed in | [`EditPipeline.swift`](Sources/OpenWisprLib/EditPipeline.swift) |
-| 6 | **`POST /v1/ask`** | Our Cloudflare Worker proxy | Voice question + context text + window title + screenshot (if needed) + UI tree | After Ask hotkey, if consented + signed in | [`AskPipeline.swift`](Sources/OpenWisprLib/AskPipeline.swift) |
+| 6 | **`POST /v1/ask`** | Our Cloudflare Worker proxy | Voice question + context text + window title + a screenshot of the frontmost window only, not the full display (if needed) + UI tree | After Ask hotkey, if consented + signed in | [`AskPipeline.swift`](Sources/OpenWisprLib/AskPipeline.swift) |
 | 7 | **Sparkle update check** | Appcast URL (not yet deployed) | Nothing (GET request) | Periodic, once wired | [`UpdaterController.swift`](Sources/OpenWisprLib/UpdaterController.swift) |
 | 8 | **`GET /v1/me`** | Our Cloudflare Worker proxy | Nothing but the bearer token; response is tier + remaining quota count | On launch, after every sign-in/sign-out, and every few seconds for up to two minutes after "Upgrade to Pro" opens Checkout | [`BillingClient.swift`](Sources/OpenWisprLib/BillingClient.swift), [`TierStore.swift`](Sources/OpenWisprLib/TierStore.swift) |
 | 9 | **`POST /v1/billing/checkout`** | Our Cloudflare Worker proxy | Nothing but the bearer token; response is a Stripe-hosted URL, opened in the default browser — no card details ever reach this app | When a signed-in Free user chooses "Upgrade to Pro…" | [`BillingClient.swift`](Sources/OpenWisprLib/BillingClient.swift), [`BillingCoordinator.swift`](Sources/OpenWisprLib/BillingCoordinator.swift) |
@@ -59,8 +59,9 @@ Every outbound connection the client makes, with the file that makes it:
 | Audio recordings | Processed locally by Whisper, deleted after transcription |
 | Keystrokes | `HotkeyManager` reads only key codes (see §1) |
 | Clipboard contents | Saved/restored around paste; concealed with `org.nspasteboard.ConcealedType` |
-| Screenshots of excluded apps | Filtered at the ScreenCaptureKit level before pixels enter memory |
-| Anything from password managers, banking apps, crypto wallets | Hard-blocked by `ExcludedApps` and `ScreenCapturer` exclusion filter |
+| Screenshots of any window but the one you're asking about | `ScreenCapturer` captures only the frontmost window (`SCContentFilter(desktopIndependentWindow:)`); no other window's or app's pixels are ever rasterized |
+| Screenshots of excluded apps | `AskCoordinator` checks the frontmost app against the exclusion list before capturing; `ScreenCapturer` checks again, against the window actually matched, before capturing |
+| Anything from password managers, banking apps, crypto wallets | Hard-blocked by `ExcludedApps` and `ScreenCapturer`'s own exclusion check |
 
 ---
 
@@ -86,7 +87,7 @@ Each consent record stores the version of the disclosure text. Bumping the versi
 |---|---|
 | Hardcoded blocklist of ~50 bundle IDs and ~30 prefix patterns | [`ExcludedApps.swift`](Sources/OpenWisprLib/ExcludedApps.swift) |
 | `AskCoordinator` and `EditCoordinator` abort before any network call if the frontmost app is excluded | [`AskCoordinator.swift:92–103`](Sources/OpenWisprLib/AskCoordinator.swift), [`EditCoordinator.swift:87–98`](Sources/OpenWisprLib/EditCoordinator.swift) |
-| `ScreenCapturer` uses ScreenCaptureKit's `excludingApplications` so excluded app pixels never enter memory | [`ScreenCapturer.swift:34–41`](Sources/OpenWisprLib/ScreenCapturer.swift) |
+| `ScreenCapturer` captures only the frontmost window (`SCContentFilter(desktopIndependentWindow:)`), so no other app's pixels ever enter memory, and refuses to capture that window at all if its own app is on the exclusion list | [`ScreenCapturer.swift`](Sources/OpenWisprLib/ScreenCapturer.swift) |
 | Secure text fields (password fields) are detected by AX role and excluded at the `ContextSnapshot` level | [`ContextSnapshot.swift:37,144–158`](Sources/OpenWisprLib/ContextSnapshot.swift) |
 
 ---

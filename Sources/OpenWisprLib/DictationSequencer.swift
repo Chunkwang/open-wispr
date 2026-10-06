@@ -25,7 +25,10 @@ protocol DictationEnvironment: AnyObject {
     func insert(_ text: String)
     /// Puts `text` on the clipboard and sends no keystroke.
     func copyToPasteboard(_ text: String)
-    func setLastTranscription(_ raw: String)
+    /// `nil` clears it (see `deliver`'s secure branch): there is nothing safe to
+    /// show on "Copy Last Dictation" once that text has turned out to belong to a
+    /// secure field.
+    func setLastTranscription(_ raw: String?)
 
     var phase: DictationPhase { get }
     func showRewriting()
@@ -49,12 +52,19 @@ protocol DictationEnvironment: AnyObject {
 /// - If the frontmost app is no longer the one that was frontmost when the
 ///   transcript was ready, nothing is pasted: the text goes on the clipboard and
 ///   the user is told.
+/// - If the focused context is secure (a secure field, or secure keyboard input
+///   system-wide), nothing is pasted, regardless of recording or focus state:
+///   the text goes on the clipboard and the user is told. This takes priority
+///   over every other notice below.
 /// - Whenever text ends somewhere other than the cursor, or a fallback needs
 ///   explaining, the user is told. If a newer recording or another notice owns the
 ///   status bar, the notice is held and shown when the bar is next idle.
 /// - On quit, the raw text of anything still pending goes on the clipboard.
 /// - `lastTranscription` is set to the RAW text when the transcript is ready,
-///   before any wait, and never changes to the rewrite.
+///   before any wait, and never changes to the rewrite. If the outcome turns out
+///   to be secure, it is cleared back to nil at delivery time: "Copy Last
+///   Dictation" must never be able to re-expose a secure field's text after the
+///   fact.
 ///
 /// A dictation that needed no waiting (rewrite not attempted, no earlier
 /// dictation pending) skips the deferral and focus checks entirely and is
@@ -98,6 +108,12 @@ final class DictationSequencer {
     private var heldNotices: [String] = []
     private var heldSince: TimeInterval?
     private var noticePollScheduled = false
+    /// The ticket whose raw text `lastTranscription` currently shows, if any.
+    /// Needed because a later dictation can `begin()` (and so overwrite
+    /// `lastTranscription`) before an earlier, still-pending one is `deliver`ed;
+    /// without tracking this, scrubbing a secure outcome's text (see `deliver`)
+    /// could wipe out a newer, non-secure dictation's legitimate text instead.
+    private var lastTranscriptionOwner: Int?
 
     init(environment: DictationEnvironment) {
         self.env = environment
@@ -113,6 +129,7 @@ final class DictationSequencer {
         nextID += 1
         openTickets[ticket.id] = ticket
         env.setLastTranscription(raw)
+        lastTranscriptionOwner = ticket.id
         return ticket
     }
 
@@ -129,7 +146,7 @@ final class DictationSequencer {
     /// Reports the result for `ticket`. Only the first report counts.
     func finish(_ ticket: Ticket, outcome: RewriteOutcome) {
         guard ticket.id >= nextToInsert, ready[ticket.id] == nil else { return }
-        let guarded = outcome.attempted || ticket.id != nextToInsert
+        let guarded = outcome.attempted || outcome.secure || ticket.id != nextToInsert
         ready[ticket.id] = Entry(ticket: ticket, outcome: outcome, guarded: guarded)
         drain()
     }
@@ -190,7 +207,24 @@ final class DictationSequencer {
         let text = entry.outcome.text.isEmpty ? ticket.raw : entry.outcome.text
         var notice = entry.outcome.notice
 
-        if forceClipboard {
+        if entry.outcome.secure {
+            // Never attempted, regardless of recording state or focus: there is
+            // no point simulating a paste that likely won't work, and might
+            // behave unpredictably, in a security-sensitive context.
+            if !text.isEmpty { env.copyToPasteboard(text) }
+            notice = DictationNotice.secureInput
+            // `begin()` already set `lastTranscription` to this raw text before
+            // the secure determination was known. Scrub it now so "Copy Last
+            // Dictation" (StatusBarController) cannot re-expose a secure field's
+            // text later, indefinitely, with no indication of where it came from.
+            // Only when nothing newer has already overwritten it first (see
+            // `lastTranscriptionOwner`'s doc comment) — otherwise this would wipe
+            // out a later, non-secure dictation's legitimate text.
+            if lastTranscriptionOwner == ticket.id {
+                env.setLastTranscription(nil)
+                lastTranscriptionOwner = nil
+            }
+        } else if forceClipboard {
             if !text.isEmpty { env.copyToPasteboard(text) }
             notice = DictationNotice.stillRecording
         } else if entry.guarded && env.frontmostProcessID() != ticket.frontmostAtStart {

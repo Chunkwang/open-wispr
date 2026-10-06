@@ -111,13 +111,24 @@ final class EditCoordinator {
                 return
             }
 
+            // `secure: true` is what actually matters here: production hands this
+            // outcome to `DictationSequencer.finish` exactly like plain dictation
+            // (AppDelegate.swift), and `deliver()` checks `outcome.secure` first,
+            // before anything else, copying to the clipboard and never calling
+            // `env.insert`. Without it this outcome would flow through as an
+            // ordinary "rewrite not attempted" result and get pasted raw into the
+            // secure field it was just refused for. The `notice` string below is
+            // only ever shown as written when `secure` is false; once it is true,
+            // `deliver()` overwrites it with `DictationNotice.secureInput`, which
+            // is accurate here (the text does end up on the clipboard), so it is
+            // left as-is rather than duplicated.
             if snapshot.status == .secureField {
-                completion(RewriteOutcome(text: instruction, notice: "Cannot use Edit in a secure field.", rewritten: false, attempted: true))
+                completion(RewriteOutcome(text: instruction, notice: "Cannot use Edit in a secure field.", rewritten: false, attempted: true, secure: true))
                 return
             }
 
             if snapshot.status == .secureEventInput {
-                completion(RewriteOutcome(text: instruction, notice: "Cannot use Edit while secure keyboard input is on.", rewritten: false, attempted: true))
+                completion(RewriteOutcome(text: instruction, notice: "Cannot use Edit while secure keyboard input is on.", rewritten: false, attempted: true, secure: true))
                 return
             }
 

@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// What to do with one finished transcript: the text to insert and an optional
 /// one-shot notice to show. `text` is never empty for a non-empty transcript.
@@ -11,6 +12,23 @@ struct RewriteOutcome: Equatable {
     /// about to be made), so the insertion step owns cleaning it up. False when
     /// nothing was sent and nothing was shown.
     var attempted: Bool = false
+    /// True when the focused context was found to be secure (a secure field, or
+    /// system-wide secure keyboard input) at the moment this dictation would have
+    /// been inserted. `DictationSequencer` never pastes when this is true — a
+    /// synthetic paste into a secure field can silently fail or behave
+    /// unpredictably, with no way to tell whether it worked — and always treats
+    /// the outcome as guarded regardless of `attempted`, so the same deferral and
+    /// notice rules apply as to any other diverted insert.
+    var secure: Bool = false
+    /// Set only by `AskCoordinator`, when it captured a window-scoped
+    /// screenshot to answer with: that window's on-screen frame, in AppKit/
+    /// `NSScreen` coordinates (already converted from the Accessibility frame
+    /// `ScreenCapturer` used — see `AXTreeWalker.axRectToScreenRect`). The
+    /// model's `<box>` tags (`BoundingBoxParser`) are normalized 0-1000
+    /// coordinates relative to whatever image was sent, so placing one back on
+    /// screen needs this window's frame, not the display's. `nil` for every
+    /// other coordinator and whenever Ask captured no screenshot.
+    var capturedWindowFrame: CGRect? = nil
 }
 
 /// Decides, for one dictation, whether the transcript is rewritten, and turns
@@ -205,5 +223,22 @@ final class RewriteCoordinator {
         let created = makeRewriter()
         rewriter = created
         return created
+    }
+
+    /// The outcome for plain dictation when the dictate hotkey's own secure-input
+    /// check (`checkSecureInput`, called before `process` from `AppDelegate`)
+    /// found the focused context secure. Mirrors `EditCoordinator` and
+    /// `AskCoordinator`'s own pre-network bailouts (see their `process` methods):
+    /// the raw transcript is returned untouched, `attempted` is false because
+    /// nothing is sent, and `secure` is true so `DictationSequencer` never pastes
+    /// it. `nil` when the context is not secure, meaning the caller should go
+    /// ahead and call `process` normally.
+    ///
+    /// This exists so the AppDelegate call site cannot repeat the bug this fixed:
+    /// calling `process` first and only gating the paste afterwards would still
+    /// send the transcript to the network from a secure field.
+    static func secureDictateOutcome(for status: SecureInputCheck, transcript: String) -> RewriteOutcome? {
+        guard status != .notSecure else { return nil }
+        return RewriteOutcome(text: transcript, notice: nil, rewritten: false, attempted: false, secure: true)
     }
 }

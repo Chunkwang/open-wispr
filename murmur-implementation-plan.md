@@ -66,6 +66,7 @@
 | 12 | Brand contrast: white on emerald is 4.50:1 (barely passes AA). Emerald text on either background is ~4.2:1 (fails for body text). Sage text on light is 2.79:1 (fails). White on amber is 3.25:1 (fails). Forest green on the dark background is 1.71:1 (unusable as text or border). Computed from the hexes in `brand-color-system.md`. | 6.2 |
 | 13 | The PRD's north-star metric needs `dictation_completed`, but the TRD says no default telemetry. They conflict. | Decision D5 |
 | 14 | `Formula/open-wispr.rb` still points at upstream `human37/open-wispr` v0.9.1. | 8.11 |
+| 15 | whisper.cpp (base.en) hallucinates the bare word "you" on silence and quiet background noise (hum, white/Gaussian noise, room tone — reproduced deterministically across all of them). `--suppress-nst` only ever suppressed the bracketed/parenthetical hallucination class (e.g. "(machinery whirring)"), never this one. Removing "you" from `Transcriber.swift`'s text-level phrase filter (to stop swallowing a real one-word "you" dictation) reopened this specific gap. `HallucinationRegressionTests.swift` reproduces it and is currently `XCTExpectFailure`-marked. Fix direction: a dependency-free RMS/energy gate on the raw audio before calling whisper at all — needs real quiet-speech measurement (not just more synthetic noise) before a safe threshold can be trusted, since too aggressive a threshold would silently drop real quiet speech, a worse failure than today's extra word. | 5.6 |
 
 ---
 
@@ -285,6 +286,10 @@ List every outbound connection in the client (model download, Sparkle appcast, p
 **5.4 No-network dictation test** · M
 A script that runs transcription under a network-denying sandbox profile and confirms it still works.
 *Done when:* the script passes locally and in CI.
+
+**5.6 Quiet-audio energy gate for the "you" hallucination** · M · *not part of the Day 15 release-candidate acceptance pass — a polish-pass item, scheduled after launch-critical work*
+Finding 15: `base.en` deterministically hallucinates the bare word "you" on true silence and quiet background noise (hum, Gaussian noise, room tone). `--suppress-nst` doesn't touch this class. `HallucinationRegressionTests.swift` reproduces it today, `XCTExpectFailure`-marked so the suite stays green while this is deferred. Fix is a dependency-free RMS/energy pre-gate on the raw audio before it ever reaches whisper-cli, but the threshold can't be chosen from synthetic noise fixtures alone — it needs real measurement against actual quiet speech first, since a threshold set too aggressively would silently eat real quiet dictation, which is worse than today's extra "you".
+*Done when:* real quiet-speech measurements exist, a threshold is chosen and justified against them, the gate is implemented, and the four `XCTExpectFailure`-wrapped tests in `HallucinationRegressionTests.swift` are unwrapped and pass for real.
 
 ---
 

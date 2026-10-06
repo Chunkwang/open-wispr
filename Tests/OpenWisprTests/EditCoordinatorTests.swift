@@ -77,6 +77,7 @@ final class EditCoordinatorTests: XCTestCase {
         XCTAssertEqual(calls.value, 0)
         XCTAssertFalse(outcome.rewritten)
         XCTAssertEqual(outcome.notice, "Cannot use Edit while secure keyboard input is on.")
+        XCTAssertTrue(outcome.secure, "secureEventInput must mark the outcome secure so DictationSequencer never pastes it")
     }
 
     func testSecureFieldBailsOutWithoutCallingTheEditor() {
@@ -86,6 +87,7 @@ final class EditCoordinatorTests: XCTestCase {
         let outcome = run(coordinator)
         XCTAssertEqual(calls.value, 0)
         XCTAssertEqual(outcome.notice, "Cannot use Edit in a secure field.")
+        XCTAssertTrue(outcome.secure, "secureField must mark the outcome secure so DictationSequencer never pastes it")
     }
 
     // MARK: - finding 3: InjectionDetector applied to selectedText and windowTitle
@@ -127,6 +129,74 @@ final class EditCoordinatorTests: XCTestCase {
         let outcome = run(coordinator)
         XCTAssertEqual(calls.value, 1)
         XCTAssertTrue(outcome.rewritten)
+    }
+
+    // MARK: - secure field: proven end-to-end through the real DictationSequencer
+
+    /// `EditCoordinator` never inserts anything itself: production hands its
+    /// outcome straight to `DictationSequencer.finish`, exactly like plain
+    /// dictation (AppDelegate.swift, both the merged Context hotkey's
+    /// has-selection branch and the standalone Edit hotkey). A minimal fake
+    /// `DictationEnvironment` (distinct from `DictationSequencerTests`' private
+    /// `FakeEnvironment`, which that file does not expose) drives a real
+    /// `DictationSequencer` here so this test proves the `secure: true` set on
+    /// the two bailouts above actually stops the paste at that layer, not just
+    /// that the flag is set and trusted to do so.
+    private final class MinimalDictationEnvironment: DictationEnvironment {
+        var inserted: [String] = []
+        var copied: [String] = []
+        var notices: [String] = []
+        private var currentPhase: DictationPhase = .transcribing
+        func now() -> TimeInterval { 0 }
+        func schedule(after delay: TimeInterval, _ work: @escaping () -> Void) {}
+        func frontmostProcessID() -> Int32? { 1 }
+        func isRecordingActive() -> Bool { false }
+        func insert(_ text: String) { inserted.append(text) }
+        func copyToPasteboard(_ text: String) { copied.append(text) }
+        func setLastTranscription(_ raw: String?) {}
+        var phase: DictationPhase { currentPhase }
+        func showRewriting() { currentPhase = .rewriting }
+        func showIdle() { currentPhase = .idle }
+        func showNotice(_ message: String) { notices.append(message); currentPhase = .other }
+        func refreshMenu() {}
+    }
+
+    func testSecureFieldOutcomeNeverReachesInsertThroughTheRealSequencer() {
+        let snapshot = ContextSnapshot(status: .secureField, appName: "1Password", bundleID: "com.example.app", focusedRole: ContextSnapshot.secureRole, isSecureField: true)
+        let coordinator = makeCoordinator(snapshot: snapshot)
+        let env = MinimalDictationEnvironment()
+        let sequencer = DictationSequencer(environment: env)
+        let ticket = sequencer.begin(raw: "make it formal")
+
+        let expectation = expectation(description: "completion")
+        coordinator.process(instruction: "make it formal", mode: { .auto }, willEdit: {}) { outcome in
+            sequencer.finish(ticket, outcome: outcome)
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 2)
+
+        XCTAssertEqual(env.inserted, [], "a secure outcome must never be pasted, even through the real sequencer")
+        XCTAssertEqual(env.copied, ["make it formal"])
+        XCTAssertEqual(env.notices, [DictationNotice.secureInput], "the sequencer's own secure notice wins, matching what actually happened (clipboard, not paste)")
+    }
+
+    func testSecureEventInputOutcomeNeverReachesInsertThroughTheRealSequencer() {
+        let snapshot = ContextSnapshot(status: .secureEventInput, appName: "Terminal", bundleID: "com.apple.Terminal")
+        let coordinator = makeCoordinator(snapshot: snapshot)
+        let env = MinimalDictationEnvironment()
+        let sequencer = DictationSequencer(environment: env)
+        let ticket = sequencer.begin(raw: "make it formal")
+
+        let expectation = expectation(description: "completion")
+        coordinator.process(instruction: "make it formal", mode: { .auto }, willEdit: {}) { outcome in
+            sequencer.finish(ticket, outcome: outcome)
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 2)
+
+        XCTAssertEqual(env.inserted, [])
+        XCTAssertEqual(env.copied, ["make it formal"])
+        XCTAssertEqual(env.notices, [DictationNotice.secureInput])
     }
 
     // MARK: - merged Context hotkey: `prefetchedSnapshot` must be the only read

@@ -29,7 +29,7 @@ private final class FakeEnvironment: DictationEnvironment {
     func isRecordingActive() -> Bool { recording }
     func insert(_ text: String) { inserted.append(text) }
     func copyToPasteboard(_ text: String) { copied.append(text) }
-    func setLastTranscription(_ raw: String) { lastTranscription = raw }
+    func setLastTranscription(_ raw: String?) { lastTranscription = raw }
     var phase: DictationPhase { currentPhase }
     func showRewriting() { rewritingShown += 1; currentPhase = .rewriting }
     func showIdle() { idleShown += 1; currentPhase = .idle }
@@ -61,6 +61,10 @@ final class DictationSequencerTests: XCTestCase {
 
     private func passthrough(_ raw: String, notice: String? = nil) -> RewriteOutcome {
         RewriteOutcome(text: raw, notice: notice, rewritten: false, attempted: false)
+    }
+
+    private func secure(_ text: String) -> RewriteOutcome {
+        RewriteOutcome(text: text, notice: nil, rewritten: false, attempted: false, secure: true)
     }
 
     // MARK: - rewrite not attempted: exactly the pre-rewrite behaviour
@@ -316,6 +320,172 @@ final class DictationSequencerTests: XCTestCase {
         env.advance(by: 1)
         XCTAssertEqual(env.inserted, [])
         XCTAssertEqual(env.copied, ["Clean."])
+    }
+
+    // MARK: - secure fields: never pasted, regardless of anything else
+
+    func testSecureOutcomeIsNeverPastedEvenWhenNotGuardedByAnythingElse() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        // Same setup as testPassthroughInsertsAtOnceWithNoTimersOrFocusCheck: a
+        // plain dictation with rewrite off is normally inserted at once, with no
+        // deferral or focus check at all. A secure outcome must still never paste.
+        let ticket = seq.begin(raw: "my password is hunter2")
+        seq.finish(ticket, outcome: secure("my password is hunter2"))
+        XCTAssertEqual(env.inserted, [])
+        XCTAssertEqual(env.copied, ["my password is hunter2"])
+        XCTAssertEqual(env.notices, [DictationNotice.secureInput])
+    }
+
+    func testSecureOutcomeTakesPriorityOverTheStillRecordingNotice() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        let a = seq.begin(raw: "raw")
+        seq.willRewrite(a)
+        env.recording = true
+        seq.finish(a, outcome: secure("raw"))
+        env.advance(by: DictationSequencer.maxDeferral + 1)
+        XCTAssertEqual(env.inserted, [], "never pasted while recording either")
+        XCTAssertEqual(env.copied, ["raw"])
+        XCTAssertEqual(env.notices, [DictationNotice.secureInput], "secure wording wins over stillRecording")
+    }
+
+    func testSecureOutcomeTakesPriorityOverTheSwitchedAppsNotice() {
+        let env = FakeEnvironment()
+        env.frontmost = 10
+        let seq = DictationSequencer(environment: env)
+        let a = seq.begin(raw: "raw")
+        seq.willRewrite(a)
+        env.frontmost = 20
+        seq.finish(a, outcome: secure("raw"))
+        XCTAssertEqual(env.inserted, [])
+        XCTAssertEqual(env.copied, ["raw"])
+        XCTAssertEqual(env.notices, [DictationNotice.secureInput], "secure wording wins over switchedApps")
+    }
+
+    func testSecureOutcomeWithEmptyTextCopiesNothing() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        let a = seq.begin(raw: "")
+        seq.finish(a, outcome: RewriteOutcome(text: "", notice: nil, rewritten: false, attempted: false, secure: true))
+        XCTAssertEqual(env.inserted, [])
+        XCTAssertEqual(env.copied, [])
+        XCTAssertEqual(env.notices, [DictationNotice.secureInput])
+    }
+
+    func testSecureOutcomeIsHeldLikeAnyOtherNoticeWhileANewerRecordingOwnsTheBar() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        let a = seq.begin(raw: "raw")
+        env.currentPhase = .recording
+        seq.finish(a, outcome: secure("raw"))
+        XCTAssertEqual(env.copied, ["raw"], "the clipboard copy still happens at once")
+        XCTAssertEqual(env.notices, [], "but the notice waits for the bar to be free")
+        XCTAssertEqual(env.currentPhase, .recording)
+    }
+
+    // MARK: - secure outcomes scrub lastTranscription (Copy Last Dictation)
+
+    func testSecureOutcomeClearsLastTranscriptionSoItCannotBeCopiedLater() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        let ticket = seq.begin(raw: "my password is hunter2")
+        XCTAssertEqual(env.lastTranscription, "my password is hunter2", "begin() sets it, as always")
+        seq.finish(ticket, outcome: secure("my password is hunter2"))
+        XCTAssertNil(env.lastTranscription, "but a secure outcome scrubs it at delivery time")
+    }
+
+    func testSecureOutcomeDoesNotClearANewerDictationsLastTranscription() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        // A is secure but its rewrite is still pending when B begins (the user
+        // started dictating again immediately): B's begin() overwrites
+        // lastTranscription with its own raw text before A is ever delivered.
+        let a = seq.begin(raw: "my password is hunter2")
+        seq.willRewrite(a)
+        let b = seq.begin(raw: "remind me to call mom")
+        XCTAssertEqual(env.lastTranscription, "remind me to call mom")
+        seq.finish(a, outcome: secure("my password is hunter2"))
+        XCTAssertEqual(env.lastTranscription, "remind me to call mom", "A's scrub must not wipe B's legitimate text")
+        seq.finish(b, outcome: passthrough("remind me to call mom"))
+        XCTAssertEqual(env.lastTranscription, "remind me to call mom")
+    }
+
+    func testTheSecureInputNoticeFollowsTheVoiceGuide() {
+        let text = DictationNotice.secureInput
+        XCTAssertFalse(text.contains("!"))
+        XCTAssertTrue(text.contains("clipboard"))
+        XCTAssertEqual(text.components(separatedBy: ". ").count, 2)
+        XCTAssertTrue(text.hasSuffix("."))
+    }
+
+    // MARK: - QA acceptance pass (Day 3 secure-field fix): additional probes
+    // not covered by the scenarios above.
+
+    /// Whatever notice the caller (Edit, a rewrite failure, etc.) attached to a
+    /// secure outcome, `deliver()` must always show the generic secure-input
+    /// notice instead, because that is what actually happened (clipboard, not
+    /// whatever the caller's own string claims). Mirrors what
+    /// `EditCoordinatorTests` proves indirectly through the real coordinator;
+    /// this pins the same contract at the sequencer level with an invented
+    /// custom notice so it is not tautological against one specific caller's
+    /// wording.
+    func testSecureOutcomeOverridesWhateverCustomNoticeTheCallerAttached() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        let a = seq.begin(raw: "raw")
+        seq.finish(a, outcome: RewriteOutcome(
+            text: "raw", notice: "Cannot use Edit in a secure field.", rewritten: false, attempted: true, secure: true
+        ))
+        XCTAssertEqual(env.notices, [DictationNotice.secureInput], "the caller's own notice text must never surface for a secure outcome")
+        XCTAssertEqual(env.copied, ["raw"])
+        XCTAssertEqual(env.inserted, [])
+    }
+
+    /// Finding, not a crash: `deliver()` sets `lastInsertAt` unconditionally
+    /// (line 212), even when the delivery was a clipboard-only secure copy with
+    /// no synthetic Cmd+V and therefore no clipboard-restore window to protect.
+    /// The result is that a guarded dictation queued right behind a secure one
+    /// still waits out `minInsertGap` before its own (real) paste, even though
+    /// nothing was actually pasted a moment ago. Documented here so the
+    /// behavior is explicit and can be judged on purpose, not rediscovered as
+    /// a mystery delay later.
+    func testASecureDeliveryStillImposesTheOrdinaryInsertGapOnTheNextGuardedInsert() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        let a = seq.begin(raw: "secret")
+        seq.finish(a, outcome: secure("secret"))
+        XCTAssertEqual(env.copied, ["secret"])
+
+        let b = seq.begin(raw: "raw")
+        seq.willRewrite(b)
+        seq.finish(b, outcome: rewritten("Clean."))
+        XCTAssertEqual(env.inserted, [], "B is held for minInsertGap purely because A set lastInsertAt, despite A never having pasted anything")
+        env.advance(by: DictationSequencer.minInsertGap + 0.01)
+        XCTAssertEqual(env.inserted, ["Clean."])
+    }
+
+    /// Regression check (angle 2): the new secure branch sits ahead of
+    /// `forceClipboard`/switchedApps in `deliver()`'s if/else-if chain, but for
+    /// a NON-secure outcome it must be a no-op — the still-recording and
+    /// switched-apps diversions, and their relative priority over each other,
+    /// must be byte-for-byte what they were before the secure check existed.
+    /// Forces both conditions to apply at once (recording timed out AND the
+    /// app changed) and confirms stillRecording still wins, exactly as the
+    /// pre-existing if/else-if order dictates.
+    func testNonSecureOutcomeStillReachesStillRecordingAheadOfSwitchedAppsUnaffectedByTheSecureCheck() {
+        let env = FakeEnvironment()
+        env.frontmost = 10
+        let seq = DictationSequencer(environment: env)
+        let a = seq.begin(raw: "raw")
+        seq.willRewrite(a)
+        env.recording = true
+        seq.finish(a, outcome: rewritten("Clean."))
+        env.frontmost = 20 // app also switched while still recording
+        env.advance(by: DictationSequencer.maxDeferral + 1)
+        XCTAssertEqual(env.inserted, [])
+        XCTAssertEqual(env.copied, ["Clean."])
+        XCTAssertEqual(env.notices, [DictationNotice.stillRecording], "forceClipboard must still be checked, and win, ahead of switchedApps, same as before the secure branch was added")
     }
 
     // MARK: - status bar guards

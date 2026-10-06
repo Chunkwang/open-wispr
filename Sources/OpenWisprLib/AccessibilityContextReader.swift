@@ -48,6 +48,19 @@ struct FrontmostApp: Equatable, Sendable {
     let pid: Int32
 }
 
+/// Answer to "would a synthetic paste or keystroke at the focused context be
+/// safe": secure keyboard input is on system-wide (a Terminal `sudo` prompt, a
+/// system password dialog), the focused element itself is a secure field (see
+/// `DefaultAccessibilityContextReader.isSecure`), or neither. Separate from
+/// `ContextSnapshot.Status` because a caller that only needs this answer (the
+/// plain-dictation hotkey, below) must never trigger the fuller read that
+/// `ContextSnapshot` is built for.
+enum SecureInputCheck: Equatable, Sendable {
+    case notSecure
+    case secureEventInput
+    case secureField
+}
+
 /// The few Accessibility and system calls the reader needs. Each call may block
 /// (that is why the reader runs off the main thread with a deadline) and must
 /// bound itself with a short per-call timeout.
@@ -136,6 +149,34 @@ final class DefaultAccessibilityContextReader: AccessibilityContextReader, @unch
             timeout.cancel()
             once.fire(snapshot)
             release()
+        }
+        timerQueue.asyncAfter(deadline: .now() + deadline, execute: timeout)
+    }
+
+    /// Cheapest possible answer to "is dictated text about to land somewhere a
+    /// synthetic paste should never be attempted" — secure keyboard input is on
+    /// system-wide, or the focused element is a secure field. Unlike `read`,
+    /// this never reads a window title or selected text, not even for an
+    /// ordinary field, so there is nothing content-bearing to fetch and discard.
+    /// For a caller with no other reason to read Accessibility: the
+    /// plain-dictation hotkey, unlike Ask/Edit, has none.
+    ///
+    /// Calls `completion` exactly once, on a background queue, within about
+    /// this reader's deadline. Answers `.notSecure` on timeout, the same
+    /// fail-open behaviour `capture` already has for an unreadable role: an
+    /// inconclusive read is not a known secure field, so dictation proceeds as
+    /// it always has rather than blocking indefinitely on a hung app. Does not
+    /// share `read`'s in-flight limit — this is a much cheaper, independent
+    /// operation, and must not be refused just because two full snapshots are
+    /// already in flight.
+    func checkSecureInput(completion: @escaping @Sendable (SecureInputCheck) -> Void) {
+        let once = Once(completion)
+        let provider = provider
+        let timeout = DispatchWorkItem { once.fire(.notSecure) }
+        workQueue.async {
+            let result = Self.captureSecureInputStatus(provider: provider)
+            timeout.cancel()
+            once.fire(result)
         }
         timerQueue.asyncAfter(deadline: .now() + deadline, execute: timeout)
     }
@@ -256,26 +297,47 @@ final class DefaultAccessibilityContextReader: AccessibilityContextReader, @unch
         if let d = roleDescription?.lowercased(), d.contains("secure") || d.contains("password") { return true }
         return false
     }
+
+    /// The pure decision `checkSecureInput` wraps, tested directly against a
+    /// fake `AXProvider`. `isSecureEventInputEnabled` is checked first and
+    /// unconditionally: it needs no Accessibility permission at all, so it
+    /// still catches a system password prompt even before the user has granted
+    /// Accessibility to this app. Everything after it needs the focused
+    /// element, and stops at role, subrole and role description — never a
+    /// title, never selected text, matching `isSecure`'s own privacy
+    /// discipline: this only ever asks "is it secure", never "what does it say".
+    static func captureSecureInputStatus(provider: AXProvider) -> SecureInputCheck {
+        if provider.isSecureEventInputEnabled() { return .secureEventInput }
+        guard provider.isProcessTrusted() else { return .notSecure }
+        guard let app = provider.frontmostApplication() else { return .notSecure }
+        guard case .value(let element) = provider.focusedElement(pid: app.pid) else { return .notSecure }
+        guard case .value(let role) = provider.string(.role, of: element) else { return .notSecure }
+        var subrole: String?
+        if case .value(let s) = provider.string(.subrole, of: element) { subrole = s }
+        var roleDescription: String?
+        if case .value(let s) = provider.string(.roleDescription, of: element) { roleDescription = s }
+        return isSecure(role: role, subrole: subrole, roleDescription: roleDescription) ? .secureField : .notSecure
+    }
 }
 
 /// Delivers a value at most once, from whichever of two racing paths gets there
 /// first. The handler is dropped after use.
-private final class Once: @unchecked Sendable {
+private final class Once<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var handler: (@Sendable (ContextSnapshot) -> Void)?
+    private var handler: (@Sendable (Value) -> Void)?
 
-    init(_ handler: @escaping @Sendable (ContextSnapshot) -> Void) { self.handler = handler }
+    init(_ handler: @escaping @Sendable (Value) -> Void) { self.handler = handler }
 
     var isDone: Bool {
         lock.lock(); defer { lock.unlock() }
         return handler == nil
     }
 
-    func fire(_ snapshot: ContextSnapshot) {
+    func fire(_ value: Value) {
         lock.lock()
         let h = handler
         handler = nil
         lock.unlock()
-        h?(snapshot)
+        h?(value)
     }
 }

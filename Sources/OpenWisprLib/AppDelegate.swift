@@ -9,6 +9,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     var config: Config!
     var recordingLifecycle = RecordingLifecycle()
     var currentRecordingURL: URL?
+    /// Correlation id for the latency timing log (DictationTiming.swift), set
+    /// fresh at each `handleRecordingStart`. Debug-only, local console output;
+    /// never the dictated text. Best-effort: if a second dictation starts
+    /// before the first one has pasted (the sequencer allows this — see
+    /// `DictationSequencer`'s queue), the first one's `paste_done` line can
+    /// end up stamped with the newer token. Acceptable for a timing log, not
+    /// for anything that must be exact.
+    fileprivate var currentDictationToken: String?
     private var sleepWakeObservers: [NSObjectProtocol] = []
     var isReady = false
     public var lastTranscription: String?
@@ -433,6 +441,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleRecordingStart() {
+        let token = DictationTiming.newToken()
+        currentDictationToken = token
+        DictationTiming.mark(token, .keyDown)
+
         statusBar.state = .recording
         if currentRecordingMode == .context {
             DispatchQueue.main.async { AskOverlayController.shared.show(state: .listening) }
@@ -455,6 +467,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleRecordingStop() {
+        // Captured now (not re-read later) so every closure below, including
+        // the completion handlers that fire well after this call returns,
+        // logs against the token for THIS attempt even if a later dictation
+        // has since overwritten `currentDictationToken`.
+        let token = currentDictationToken
         guard let audioURL = recorder.stopRecording() else {
             RecordingCancellation.discardTrackedPartialRecording(&currentRecordingURL)
             statusBar.state = .idle
@@ -475,7 +492,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             do {
+                DictationTiming.mark(token, .asrStart)
                 let raw = try self.transcriber.transcribe(audioURL: audioURL)
+                DictationTiming.mark(token, .asrDone, detail: "ok")
                 let text = (self.config.spokenPunctuation?.value ?? false) ? TextPostProcessor.process(raw) : raw
                 if maxRecordings > 0 {
                     RecordingStore.prune(maxCount: maxRecordings)
@@ -522,6 +541,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                                     willEdit: {},
                                     prefetchedSnapshot: snapshot,
                                     completion: { outcome in
+                                        DictationTiming.mark(token, .cleanupDone, detail: "edit")
                                         DispatchQueue.main.async {
                                             if outcome.rewritten {
                                                 self.lastRewritePair = (raw: text, rewritten: outcome.text)
@@ -552,11 +572,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                                     },
                                     prefetchedSnapshot: snapshot,
                                     completion: { outcome in
+                                        DictationTiming.mark(token, .cleanupDone, detail: "ask")
                                         DispatchQueue.main.async {
                                             if let notice = outcome.notice, !outcome.rewritten {
                                                 AskOverlayController.shared.show(state: .error(notice))
                                             } else {
-                                                AskOverlayController.shared.show(state: .answered(outcome.text))
+                                                AskOverlayController.shared.show(state: .answered(outcome.text), windowFrame: outcome.capturedWindowFrame)
                                             }
                                         }
                                     }
@@ -568,6 +589,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
                     let ticket = self.sequencer.begin(raw: text)
                     let completionHandler: (RewriteOutcome) -> Void = { outcome in
+                        DictationTiming.mark(token, .cleanupDone, detail: mode == .dictate ? "dictate" : "edit")
                         let updateBlock = {
                             if outcome.rewritten {
                                 self.lastRewritePair = (raw: text, rewritten: outcome.text)
@@ -583,12 +605,36 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     
                     if mode == .dictate {
-                        self.rewriteCoordinator.process(
-                            transcript: text,
-                            mode: { self.config.rewriteMode },
-                            willRewrite: { self.sequencer.willRewrite(ticket) },
-                            completion: completionHandler
-                        )
+                        // Plain dictation has no other reason to read Accessibility
+                        // (unlike Edit/Ask, which already read a full snapshot and
+                        // already refuse a secure field or secure keyboard input
+                        // before sending anything over the network). This check is
+                        // the narrow one: it only ever asks "is it secure", never
+                        // "what does it say", and skips both the rewrite call and
+                        // the paste attempt entirely when it is — nothing is sent
+                        // to the network from a secure field, and a synthetic paste
+                        // into one can silently fail or behave unpredictably, with
+                        // no way to tell the user whether it worked.
+                        DefaultAccessibilityContextReader.system().checkSecureInput { status in
+                            DispatchQueue.main.async {
+                                // Bail out BEFORE touching the network when the context is
+                                // secure, exactly like Edit/Ask's own pre-network bailouts
+                                // (EditCoordinator.process, AskCoordinator.process). Calling
+                                // `rewriteCoordinator.process` first and only gating the paste
+                                // afterwards would still send the raw transcript to the cloud
+                                // rewrite pipeline from a password field.
+                                if let secureOutcome = RewriteCoordinator.secureDictateOutcome(for: status, transcript: text) {
+                                    completionHandler(secureOutcome)
+                                    return
+                                }
+                                self.rewriteCoordinator.process(
+                                    transcript: text,
+                                    mode: { self.config.rewriteMode },
+                                    willRewrite: { self.sequencer.willRewrite(ticket) },
+                                    completion: completionHandler
+                                )
+                            }
+                        }
                     } else if mode == .edit {
                         self.editCoordinator.process(
                             instruction: text,
@@ -599,6 +645,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             } catch {
+                DictationTiming.mark(token, .asrDone, detail: "error")
                 if maxRecordings > 0 {
                     RecordingStore.prune(maxCount: maxRecordings)
                 }
@@ -728,7 +775,13 @@ final class AppDictationEnvironment: DictationEnvironment {
 
     func isRecordingActive() -> Bool { delegate.recordingLifecycle.isRecording }
 
-    func insert(_ text: String) { delegate.inserter.insert(text: text) }
+    func insert(_ text: String) {
+        // Best-effort correlation only (see `currentDictationToken`'s doc
+        // comment): this reads whichever token is current when the paste
+        // actually happens, which can be a newer dictation's token if one
+        // started while this one was still waiting to be inserted.
+        delegate.inserter.insert(text: text, token: delegate.currentDictationToken)
+    }
 
     func copyToPasteboard(_ text: String) {
         // This replaces whatever the user had on the clipboard. The notice that
@@ -740,7 +793,7 @@ final class AppDictationEnvironment: DictationEnvironment {
         pasteboard.setString(text, forType: .string)
     }
 
-    func setLastTranscription(_ raw: String) { delegate.lastTranscription = raw }
+    func setLastTranscription(_ raw: String?) { delegate.lastTranscription = raw }
 
     var phase: DictationPhase {
         switch delegate.statusBar.state {

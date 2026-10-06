@@ -74,7 +74,12 @@ class TextInserter {
     /// only, preventing Universal Clipboard from syncing it to iPhones/iPads.
     private static let localOnlyType = NSPasteboard.PasteboardType("com.apple.pasteboard.local-only")
 
-    func insert(text: String) {
+    /// `token` is the dictation-timing correlation id (DictationTiming.swift),
+    /// purely for the local debug latency log — logging only, `nil` by
+    /// default so every other caller (including the tests below) is
+    /// unaffected. Never pass dictated text or anything other than the token
+    /// here.
+    func insert(text: String, token: String? = nil) {
         let pasteboard = pasteboardProvider()
         let savedItems = savePasteboard(pasteboard)
 
@@ -95,6 +100,7 @@ class TextInserter {
         let writeChangeCount = pasteboard.changeCount
 
         pasteAction(pasteKeyCode)
+        DictationTiming.mark(token, .pasteDone)
 
         scheduleRestore(restoreDelay) {
             // If something else has written to the pasteboard since our write

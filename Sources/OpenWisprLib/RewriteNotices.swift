@@ -42,4 +42,9 @@ enum DictationNotice {
     /// The recording stayed active so long that the text could not be pasted
     /// without waiting indefinitely, so it was put on the clipboard instead.
     static let stillRecording = "You were still recording, so the dictation wasn't pasted. The text is on your clipboard."
+
+    /// The focused field was secure, or secure keyboard input was on, so pasting
+    /// was never attempted: a synthetic paste into a secure field can silently
+    /// fail or behave unpredictably, with no way to tell whether it worked.
+    static let secureInput = "Secure input is active, so the dictation wasn't pasted. The text is on your clipboard."
 }
