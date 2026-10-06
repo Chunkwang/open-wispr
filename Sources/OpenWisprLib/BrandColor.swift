@@ -6,9 +6,15 @@ import SwiftUI
 /// `success`, `danger`, `warning`) over the raw palette colours. The semantic
 /// colours adapt to light and dark mode automatically via `@Environment(\.colorScheme)`.
 ///
-/// **Contrast audit (Task 6.2, pending):** white on emerald is 4.50:1 (passes
-/// AA for large text and UI). Sage text on light is 2.79:1 — use only for
-/// secondary/hint text, never body. Adjust tokens when the contrast test lands.
+/// **Contrast audit (Task 6.2, done — see `BrandColorContrastTests`):** white
+/// on emerald is 4.50:1 (passes AA for large text and UI). Sage text on light
+/// is 2.79:1 — use only for secondary/hint text, never body. The semantic
+/// colours below (`success`/`danger`/`warning` and their `Light`/`Dark`
+/// variants) all pass against their matching background except
+/// `warningLight` on `lightBackground` (4.15:1) and a white label on
+/// `warning` or `warningDark` — `warning` has no call site anywhere in the
+/// app yet, so those tokens are documented as failing rather than adjusted;
+/// fix them when `warning` actually ships. Fix a token, not the test.
 struct BrandColor {
     // MARK: - Raw palette
 

@@ -169,13 +169,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         if !Transcriber.modelExists(modelSize: config.modelSize) {
             DispatchQueue.main.async {
                 self.statusBar.state = .downloading
-                self.statusBar.updateDownloadProgress("Downloading \(self.config.modelSize) model...")
+                self.statusBar.updateDownloadProgress(Copy.downloadingModel(self.config.modelSize, percent: 0))
             }
             print("Downloading \(config.modelSize) model...")
             try ModelDownloader.download(modelSize: config.modelSize) { [weak self] percent in
                 DispatchQueue.main.async {
                     let pct = Int(percent)
-                    self?.statusBar.updateDownloadProgress("Downloading \(self?.config.modelSize ?? "") model... \(pct)%", percent: percent)
+                    self?.statusBar.updateDownloadProgress(Copy.downloadingModel(self?.config.modelSize ?? "", percent: pct), percent: percent)
                 }
             }
             DispatchQueue.main.async {
@@ -186,7 +186,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         if let modelPath = Transcriber.findModel(modelSize: config.modelSize) {
             let modelURL = URL(fileURLWithPath: modelPath)
             if !ModelDownloader.isValidGGMLFile(at: modelURL) {
-                let msg = "Model file is corrupted. Re-download with: open-wispr download-model \(config.modelSize)"
+                let msg = Copy.modelFileCorrupted(config.modelSize)
                 print("Error: \(msg)")
                 DispatchQueue.main.async {
                     self.statusBar.state = .error(msg)
@@ -375,13 +375,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !wasDownloading && !Transcriber.modelExists(modelSize: config.modelSize) {
             statusBar.state = .downloading
-            statusBar.updateDownloadProgress("Downloading \(config.modelSize) model...")
+            statusBar.updateDownloadProgress(Copy.downloadingModel(config.modelSize, percent: 0))
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 do {
                     try ModelDownloader.download(modelSize: newConfig.modelSize) { percent in
                         DispatchQueue.main.async {
                             let pct = Int(percent)
-                            self?.statusBar.updateDownloadProgress("Downloading \(newConfig.modelSize) model... \(pct)%", percent: percent)
+                            self?.statusBar.updateDownloadProgress(Copy.downloadingModel(newConfig.modelSize, percent: pct), percent: percent)
                         }
                     }
                     DispatchQueue.main.async {
@@ -559,8 +559,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                                 if trimmedInstruction.isEmpty {
                                     let hotkeyDesc = self.config.askHotkey.map {
                                         KeyCodes.describe(keyCode: $0.keyCode, modifiers: $0.modifiers)
-                                    } ?? "the Context hotkey"
-                                    AskOverlayController.shared.show(state: .error("No speech detected. Hold \(hotkeyDesc) and ask a question."))
+                                    } ?? Copy.contextHotkeyFallbackName
+                                    AskOverlayController.shared.show(state: .error(Copy.askNoSpeechDetected(hotkeyDesc)))
                                     return
                                 }
 

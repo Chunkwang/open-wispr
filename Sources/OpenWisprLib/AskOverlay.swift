@@ -47,12 +47,12 @@ public class AskOverlayController: @unchecked Sendable {
             var cleanText = parseResult.cleanText
             if cleanText.isEmpty {
                 if let firstLabel = parseResult.boxes.first?.label {
-                    cleanText = "Highlighted \(firstLabel) on screen."
+                    cleanText = Copy.askHighlightedLabel(firstLabel)
                 } else if !parseResult.boxes.isEmpty {
-                    cleanText = "Highlighted element on screen."
+                    cleanText = Copy.askHighlightedElement
                 } else {
                     let trimmed = rawAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
-                    cleanText = trimmed.isEmpty ? "No response text received." : trimmed
+                    cleanText = trimmed.isEmpty ? Copy.askNoResponseText : trimmed
                 }
             }
             effectiveState = .answered(cleanText)
@@ -127,7 +127,7 @@ struct AskOverlayView: View {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Listening...")
+                    Text(Copy.askListening)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.primary)
                     Spacer()
@@ -136,7 +136,7 @@ struct AskOverlayView: View {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Thinking...")
+                    Text(Copy.askProcessing)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.primary)
                     Spacer()
@@ -159,7 +159,7 @@ struct AskOverlayView: View {
                         pb.setString(answer, forType: .string)
                         onClose()
                     }) {
-                        Label("Copy & Dismiss", systemImage: "doc.on.doc")
+                        Label(Copy.askCopyDismiss, systemImage: "doc.on.doc")
                             .font(.system(size: 12, weight: .medium))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)

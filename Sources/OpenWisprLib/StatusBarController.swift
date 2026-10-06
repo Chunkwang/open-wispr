@@ -156,7 +156,7 @@ class StatusBarController: NSObject {
         if let text = text, let item = stateMenuItem {
             let config = Config.load()
             let hotkeyDesc = config.hotkeySummary()
-            item.title = "\(text) (hotkey: \(hotkeyDesc))"
+            item.title = Copy.menuStateWithHotkey(text, hotkeyDescription: hotkeyDesc)
         } else {
             buildMenu()
         }
@@ -177,7 +177,7 @@ class StatusBarController: NSObject {
 
         let menu = NSMenu()
 
-        let titleItem = NSMenuItem(title: "\(ProductInfo.displayName) v\(OpenWispr.version)", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: Copy.menuTitle(displayName: ProductInfo.displayName, version: OpenWispr.version), action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
 
@@ -188,15 +188,15 @@ class StatusBarController: NSObject {
             stateLabel = progress
         } else {
             switch state {
-            case .idle: stateLabel = "Ready"
-            case .recording: stateLabel = "Recording..."
-            case .transcribing: stateLabel = "Transcribing..."
-            case .rewriting: stateLabel = "Rewriting..."
-            case .downloading: stateLabel = "Downloading model..."
-            case .waitingForPermission: stateLabel = "Waiting for Accessibility permission..."
-            case .copiedToClipboard: stateLabel = "Copied to clipboard"
+            case .idle: stateLabel = Copy.statusIdle
+            case .recording: stateLabel = Copy.statusRecording
+            case .transcribing: stateLabel = Copy.statusTranscribing
+            case .rewriting: stateLabel = Copy.statusRewriting
+            case .downloading: stateLabel = Copy.statusDownloadingModel
+            case .waitingForPermission: stateLabel = Copy.statusWaitingForAccessibility
+            case .copiedToClipboard: stateLabel = Copy.statusCopiedToClipboard
             case .notice(let message): stateLabel = message
-            case .error(let message): stateLabel = "Error: \(message)"
+            case .error(let message): stateLabel = Copy.statusError(message)
             }
         }
         if case .waitingForPermission = state {
@@ -204,12 +204,12 @@ class StatusBarController: NSObject {
                 Permissions.openAccessibilitySettings()
             }
             menuItemTargets.append(target)
-            let stateItem = NSMenuItem(title: "Grant Accessibility Permission...", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+            let stateItem = NSMenuItem(title: Copy.menuGrantAccessibility, action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
             stateItem.target = target
             menu.addItem(stateItem)
             stateMenuItem = stateItem
         } else {
-            let stateItem = NSMenuItem(title: "\(stateLabel) (hotkey: \(hotkeyDesc))", action: nil, keyEquivalent: "")
+            let stateItem = NSMenuItem(title: Copy.menuStateWithHotkey(stateLabel, hotkeyDescription: hotkeyDesc), action: nil, keyEquivalent: "")
             stateItem.isEnabled = false
             menu.addItem(stateItem)
             stateMenuItem = stateItem
@@ -219,7 +219,7 @@ class StatusBarController: NSObject {
 
         let currentLang = config.language
         let langName = Config.supportedLanguages.first(where: { $0.code == currentLang })?.name ?? currentLang
-        let langItem = NSMenuItem(title: "Language: \(langName)", action: nil, keyEquivalent: "")
+        let langItem = NSMenuItem(title: Copy.menuLanguage(langName), action: nil, keyEquivalent: "")
         let langSubmenu = NSMenu()
 
         for (index, lang) in Config.supportedLanguages.enumerated() {
@@ -263,18 +263,18 @@ class StatusBarController: NSObject {
             self?.onConfigChange?(cfg)
         }
         menuItemTargets.append(translateTarget)
-        let translateItem = NSMenuItem(title: "Translate Foreign Speech to English", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+        let translateItem = NSMenuItem(title: Copy.menuTranslateForeignSpeech, action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
         translateItem.target = translateTarget
         translateItem.state = (config.translateToEnglish?.value ?? false) ? .on : .off
         menu.addItem(translateItem)
 
-        let modelItem = NSMenuItem(title: "Model: \(config.modelSize)", action: nil, keyEquivalent: "")
+        let modelItem = NSMenuItem(title: Copy.menuModel(config.modelSize), action: nil, keyEquivalent: "")
         let modelSubmenu = NSMenu()
 
         let englishModels = Config.supportedModels.filter { Config.isEnglishOnlyModel($0) }
         let multilingualModels = Config.supportedModels.filter { !Config.isEnglishOnlyModel($0) }
 
-        let engHeader = NSMenuItem(title: "English", action: nil, keyEquivalent: "")
+        let engHeader = NSMenuItem(title: Copy.menuModelHeaderEnglish, action: nil, keyEquivalent: "")
         engHeader.isEnabled = false
         modelSubmenu.addItem(engHeader)
 
@@ -299,7 +299,7 @@ class StatusBarController: NSObject {
 
         modelSubmenu.addItem(NSMenuItem.separator())
 
-        let multiHeader = NSMenuItem(title: "Multilingual", action: nil, keyEquivalent: "")
+        let multiHeader = NSMenuItem(title: Copy.menuModelHeaderMultilingual, action: nil, keyEquivalent: "")
         multiHeader.isEnabled = false
         modelSubmenu.addItem(multiHeader)
 
@@ -328,8 +328,8 @@ class StatusBarController: NSObject {
             if let id = config.audioInputDeviceID { return device.id == id }
             return false
         })
-        let currentDeviceName = selectedDevice?.name ?? "System Default"
-        let audioItem = NSMenuItem(title: "Audio Input: \(currentDeviceName)", action: nil, keyEquivalent: "")
+        let currentDeviceName = selectedDevice?.name ?? Copy.menuAudioSystemDefault
+        let audioItem = NSMenuItem(title: Copy.menuAudioInput(currentDeviceName), action: nil, keyEquivalent: "")
         let audioSubmenu = NSMenu()
         audioSubmenu.autoenablesItems = false
 
@@ -341,7 +341,7 @@ class StatusBarController: NSObject {
             self?.onConfigChange?(cfg)
         }
         menuItemTargets.append(defaultTarget)
-        let defaultItem = NSMenuItem(title: "System Default", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+        let defaultItem = NSMenuItem(title: Copy.menuAudioSystemDefault, action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
         defaultItem.target = defaultTarget
         if config.audioInputDeviceID == nil && config.audioInputDeviceUID == nil {
             defaultItem.state = .on
@@ -380,7 +380,7 @@ class StatusBarController: NSObject {
             self?.onConfigChange?(cfg)
         }
         menuItemTargets.append(toggleTarget)
-        let toggleItem = NSMenuItem(title: "Toggle Mode", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+        let toggleItem = NSMenuItem(title: Copy.menuToggleMode, action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
         toggleItem.target = toggleTarget
         toggleItem.state = (config.toggleMode?.value ?? false) ? .on : .off
         menu.addItem(toggleItem)
@@ -419,7 +419,7 @@ class StatusBarController: NSObject {
             }
         }
         menuItemTargets.append(rewriteTarget)
-        let rewriteItem = NSMenuItem(title: "Rewrite", action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
+        let rewriteItem = NSMenuItem(title: Copy.menuRewrite, action: #selector(MenuItemTarget.invoke), keyEquivalent: "")
         rewriteItem.target = rewriteTarget
         rewriteItem.state = config.rewriteMode == .auto ? .on : .off
         menu.addItem(rewriteItem)
@@ -484,7 +484,7 @@ class StatusBarController: NSObject {
             }
             menuItemTargets.append(revokeTarget)
             let revokeItem = NSMenuItem(
-                title: "Revoke rewrite consent",
+                title: Copy.menuRevokeRewriteConsent,
                 action: #selector(MenuItemTarget.invoke),
                 keyEquivalent: ""
             )
@@ -509,7 +509,7 @@ class StatusBarController: NSObject {
         }
         menuItemTargets.append(contextConsentTarget)
         let contextConsentItem = NSMenuItem(
-            title: contextConsentGranted ? "Revoke context consent" : "Enable screen context…",
+            title: contextConsentGranted ? Copy.menuRevokeContextConsent : Copy.menuEnableContext,
             action: #selector(MenuItemTarget.invoke),
             keyEquivalent: ""
         )
@@ -570,7 +570,7 @@ class StatusBarController: NSObject {
         menu.addItem(NSMenuItem.separator())
 
         let lastText = (NSApplication.shared.delegate as? AppDelegate)?.lastTranscription
-        let copyTitle = copiedFeedback ? "Copied!" : Copy.menuCopyLast
+        let copyTitle = copiedFeedback ? Copy.menuCopied : Copy.menuCopyLast
         let copyItem = NSMenuItem(title: copyTitle, action: lastText != nil && !copiedFeedback ? #selector(copyLastTranscription) : nil, keyEquivalent: "c")
         copyItem.target = self
         if lastText == nil || copiedFeedback { copyItem.isEnabled = copiedFeedback }
@@ -590,11 +590,11 @@ class StatusBarController: NSObject {
 
         if Config.effectiveMaxRecordings(config.maxRecordings) > 0 {
             let recordings = RecordingStore.listRecordings()
-            let reprocessItem = NSMenuItem(title: "Recent Recordings", action: nil, keyEquivalent: "")
+            let reprocessItem = NSMenuItem(title: Copy.menuRecentRecordings, action: nil, keyEquivalent: "")
             let submenu = NSMenu()
 
             if recordings.isEmpty {
-                let emptyItem = NSMenuItem(title: "No recordings", action: nil, keyEquivalent: "")
+                let emptyItem = NSMenuItem(title: Copy.menuNoRecordings, action: nil, keyEquivalent: "")
                 emptyItem.isEnabled = false
                 submenu.addItem(emptyItem)
             } else {
@@ -617,15 +617,15 @@ class StatusBarController: NSObject {
 
         menu.addItem(NSMenuItem.separator())
 
-        let reloadItem = NSMenuItem(title: "Reload Configuration", action: #selector(reloadConfiguration), keyEquivalent: "r")
+        let reloadItem = NSMenuItem(title: Copy.menuReloadConfiguration, action: #selector(reloadConfiguration), keyEquivalent: "r")
         reloadItem.target = self
         menu.addItem(reloadItem)
 
-        let openItem = NSMenuItem(title: "Open Configuration", action: #selector(openConfiguration), keyEquivalent: "o")
+        let openItem = NSMenuItem(title: Copy.menuOpenConfiguration, action: #selector(openConfiguration), keyEquivalent: "o")
         openItem.target = self
         menu.addItem(openItem)
 
-        let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        let updateItem = NSMenuItem(title: Copy.menuCheckForUpdates, action: #selector(checkForUpdates), keyEquivalent: "")
         updateItem.target = self
         menu.addItem(updateItem)
 

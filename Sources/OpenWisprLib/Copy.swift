@@ -36,6 +36,41 @@ enum Copy {
     static let menuRevokeContextConsent = "Revoke context consent"
     static let menuEnableContext = "Enable screen context…"
     static let menuQuit = "Quit"
+    static let menuGrantAccessibility = "Grant Accessibility Permission…"
+    static let menuTranslateForeignSpeech = "Translate Foreign Speech to English"
+    static let menuModelHeaderEnglish = "English"
+    static let menuModelHeaderMultilingual = "Multilingual"
+    static let menuAudioSystemDefault = "System Default"
+    static let menuToggleMode = "Toggle Mode"
+    static let menuRecentRecordings = "Recent Recordings"
+    static let menuNoRecordings = "No recordings"
+    static let menuReloadConfiguration = "Reload Configuration"
+    static let menuOpenConfiguration = "Open Configuration"
+    static let menuCheckForUpdates = "Check for Updates…"
+    static func menuTitle(displayName: String, version: String) -> String {
+        "\(displayName) v\(version)"
+    }
+    static func menuStateWithHotkey(_ stateLabel: String, hotkeyDescription: String) -> String {
+        "\(stateLabel) (hotkey: \(hotkeyDescription))"
+    }
+    static func menuLanguage(_ name: String) -> String {
+        "Language: \(name)"
+    }
+    static func menuModel(_ name: String) -> String {
+        "Model: \(name)"
+    }
+    static func menuAudioInput(_ name: String) -> String {
+        "Audio Input: \(name)"
+    }
+
+    // MARK: - Status bar state labels
+
+    static let statusDownloadingModel = "Downloading model…"
+    static let statusWaitingForAccessibility = "Waiting for Accessibility permission…"
+    static let statusCopiedToClipboard = "Copied to clipboard"
+    static func statusError(_ message: String) -> String {
+        "Error: \(message)"
+    }
 
     // MARK: - Rewrite disclosure sheet
 
@@ -78,11 +113,23 @@ enum Copy {
     }
     static let editExcludedGeneric = "Edit is disabled for this app to protect your privacy."
     static let injectionBlocked = "Screen content rejected due to unsafe instructions."
+    static func askNoSpeechDetected(_ hotkeyDescription: String) -> String {
+        "No speech detected. Hold \(hotkeyDescription) and ask a question."
+    }
+    static let contextHotkeyFallbackName = "the Context hotkey"
+    static func askHighlightedLabel(_ label: String) -> String {
+        "Highlighted \(label) on screen."
+    }
+    static let askHighlightedElement = "Highlighted element on screen."
+    static let askNoResponseText = "No response text received."
 
     // MARK: - Model download
 
     static func downloadingModel(_ size: String, percent: Int) -> String {
         "Downloading \(size) model... \(percent)%"
+    }
+    static func modelFileCorrupted(_ modelSize: String) -> String {
+        "Model file is corrupted. Re-download with: open-wispr download-model \(modelSize)"
     }
 
     // MARK: - Growth Loop (Before / After)

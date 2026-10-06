@@ -64,5 +64,11 @@ Recommend **dark mode as the default**, light mode as the alternative. Reasoning
 
 - **Final product name** — still the actual blocker; colors and a wordmark can't truly lock until this resolves. Twice deferred now.
 - **Typography and logo mark** — already in progress separately (see the visual identity reference); unaffected by the v1/v2 scope change, since both were already built name-agnostic and feature-agnostic.
-- **Full contrast validation** — see Section 4, needed before v1 ships.
+- **Full contrast validation** — see Section 4; now partially done (Task 6.2, see below). Still outstanding: the raw palette values (`forestGreen`, `emerald`, `sageGray`) only have a contrast audit for the sign-in window's own tokens (`docs/design/sign-in.md`), not yet for every other place they get used.
 - **v2 semantic-color application design** — once the agent layer is actually greenlit (see the PRD's Path to v2), the danger/warning colors specified here need real confirmation-dialog UI work, not just the palette values already locked in this document.
+
+### 6a. Task 6.2 contrast audit result (added 2026-10-06)
+
+`Tests/OpenWisprTests/BrandColorContrastTests.swift` computes WCAG ratios for `BrandColor`'s own `success`/`danger`/`warning` semantic colors (and their `Light`/`Dark` variants) against `BrandColor.darkBackground`/`lightBackground`, both as text (4.5:1) and as a UI element / large text / white-on-fill (3:1).
+
+**No token changed.** Every `success` and `danger` pairing already passes at the relevant threshold. `warning` (amber `#B8860B`) has two real failures — `warningLight` (`#9A7209`) on `lightBackground` is 4.15:1 against the 4.5:1 text floor, and a white label on `warning` or `warningDark` fails too (3.25:1 and 2.38:1) — but as of this audit, grepping `Sources/` finds **no call site anywhere** for `BrandColor.success`, `.danger`, `.warning`, their `Light`/`Dark` variants, or the `success(for:)`/`danger(for:)`/`warning(for:)`/`background(for:)`/`text(for:)` helpers outside `BrandColor.swift` itself. That matches this document's own Section 3 ("in v1, this semantic system is mostly dormant") and its table ("Use in v1: Not used yet" for both danger and warning). Per Task 6.2's scope note — "Amber and danger are dormant in v1, so only fix what ships" — the failing numbers are documented in the test and in `BrandColor.swift`'s doc comment, not forced to pass. Lighten `warningLight` (or pick a different amber) the day something actually renders it.
