@@ -83,19 +83,7 @@ class TextInserter {
         let pasteboard = pasteboardProvider()
         let savedItems = savePasteboard(pasteboard)
 
-        pasteboard.clearContents()
-
-        // Build a pasteboard item with concealment markers so clipboard
-        // managers don't capture dictated text and Universal Clipboard
-        // doesn't sync it to other devices.
-        let item = NSPasteboardItem()
-        item.setString(text, forType: .string)
-        // The value of the concealed marker doesn't matter — its presence
-        // is the signal. We use an empty string.
-        item.setString("", forType: Self.concealedType)
-        // Prevent Universal Clipboard from syncing dictated text.
-        item.setData(Data(), forType: Self.localOnlyType)
-        pasteboard.writeItems([item])
+        Self.writeConcealed(text, to: pasteboard)
 
         let writeChangeCount = pasteboard.changeCount
 
@@ -131,6 +119,27 @@ class TextInserter {
             return item
         }
         pasteboard.writeItems(pasteboardItems)
+    }
+
+    /// Writes `text` to `pasteboard` as a pasteboard item carrying the same
+    /// concealment/local-only markers `insert(text:)` uses, so clipboard
+    /// managers skip it and Universal Clipboard doesn't sync it. Unlike
+    /// `insert(text:)`, this does not save/restore the previous clipboard —
+    /// that save/restore is specific to the paste-then-restore dictation
+    /// flow. Callers that just need to put sensitive text on the clipboard
+    /// (e.g. AskOverlay's "Copy & Dismiss", which can hold screen-derived
+    /// text) call this directly.
+    static func writeConcealed(_ text: String, to pasteboard: any TextInsertionPasteboard) {
+        pasteboard.clearContents()
+
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        // The value of the concealed marker doesn't matter — its presence
+        // is the signal. We use an empty string.
+        item.setString("", forType: concealedType)
+        // Prevent Universal Clipboard from syncing this text.
+        item.setData(Data(), forType: localOnlyType)
+        pasteboard.writeItems([item])
     }
 
     private static func resolveKeyCode(for target: Character) -> CGKeyCode? {

@@ -119,6 +119,32 @@ final class TextInserterTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "")
     }
 
+    // AskOverlay's "Copy & Dismiss" routes through this (security review,
+    // Oct 2026): an Ask answer can be built from screen content, so it needs
+    // the same concealment/local-only protection as dictated text, with no
+    // save/restore of the prior clipboard (that's specific to the
+    // paste-then-restore dictation flow in `insert(text:)`).
+    func testWriteConcealedMarksItemConcealedAndLocalOnlyWithNoRestore() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+
+        TextInserter.writeConcealed("ask answer", to: pasteboard)
+
+        XCTAssertEqual(pasteboard.events, ["clear", "writeItems"])
+        XCTAssertEqual(pasteboard.string(forType: .string), "ask answer")
+
+        let types = pasteboard.pasteboardItems?.first?.types ?? []
+        XCTAssertTrue(types.contains(NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")))
+        XCTAssertTrue(types.contains(NSPasteboard.PasteboardType("com.apple.pasteboard.local-only")))
+    }
+
+    func testWriteConcealedWithEmptyTextDoesNotCrash() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+
+        TextInserter.writeConcealed("", to: pasteboard)
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "")
+    }
+
     private func makeInserter(
         pasteboard: FakePasteboard,
         scheduler: CapturingScheduler,

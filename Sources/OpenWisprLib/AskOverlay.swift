@@ -154,9 +154,13 @@ struct AskOverlayView: View {
                 
                 HStack {
                     Button(action: {
-                        let pb = NSPasteboard.general
-                        pb.clearContents()
-                        pb.setString(answer, forType: .string)
+                        // An Ask answer can be built from screen content (OCR'd
+                        // text, a window's contents), so it gets the same
+                        // concealment/local-only clipboard protection as
+                        // dictated text (TextInserter.insert) — clipboard
+                        // managers skip it and it doesn't sync via Universal
+                        // Clipboard.
+                        TextInserter.writeConcealed(answer, to: NSPasteboard.general)
                         onClose()
                     }) {
                         Label(Copy.askCopyDismiss, systemImage: "doc.on.doc")
