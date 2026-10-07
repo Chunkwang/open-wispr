@@ -50,7 +50,7 @@ check_trust_failure_output() {
         fail "$description does not fall through to binary-not-found"
     elif ! echo "$output" | grep -q "tap is not trusted"; then
         fail "$description explains Homebrew trust"
-    elif ! echo "$output" | grep -q -- "brew trust --formula human37/open-wispr/open-wispr"; then
+    elif ! echo "$output" | grep -q -- "brew trust --formula Chunkwang/open-wispr/open-wispr"; then
         fail "$description prints remediation command"
     else
         pass "$description prints remediation without binary fallback"
@@ -79,9 +79,9 @@ STUB
 set -u
 
 print_trust_error() {
-    echo "Error: Cannot install human37/open-wispr/open-wispr because its tap is not trusted" >&2
+    echo "Error: Cannot install Chunkwang/open-wispr/open-wispr because its tap is not trusted" >&2
     echo "To trust this formula, run:" >&2
-    echo "  brew trust --formula human37/open-wispr/open-wispr" >&2
+    echo "  brew trust --formula Chunkwang/open-wispr/open-wispr" >&2
 }
 
 case "${1:-}" in
@@ -92,7 +92,7 @@ case "${1:-}" in
         exit 0
         ;;
     --repository)
-        if [ "${2:-}" = "human37/open-wispr" ]; then
+        if [ "${2:-}" = "Chunkwang/open-wispr" ]; then
             echo "${OPEN_WISPR_TEST_TAP_DIR:?}"
             exit 0
         fi
@@ -251,7 +251,8 @@ else
     fail "App bundle missing Info.plist"
 fi
 
-if grep -q "com.human37.open-wispr" /tmp/OpenWisprTest.app/Contents/Info.plist; then
+EXPECTED_BUNDLE_ID=$(grep 'static let bundleIdentifier' Sources/OpenWisprLib/ProductInfo.swift | sed 's/.*"\(.*\)".*/\1/')
+if grep -q "$EXPECTED_BUNDLE_ID" /tmp/OpenWisprTest.app/Contents/Info.plist; then
     pass "Info.plist has correct bundle ID"
 else
     fail "Info.plist wrong bundle ID"

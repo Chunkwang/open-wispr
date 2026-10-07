@@ -3,6 +3,7 @@ set -e
 
 VERSION="$1"
 TAG="v${VERSION}"
+TAP_REPO="Chunkwang/homebrew-open-wispr"
 TAP_DIR="/tmp/homebrew-open-wispr"
 FORMULA="${TAP_DIR}/open-wispr.rb"
 
@@ -11,11 +12,21 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
+# TODO(D1 follow-up): no Homebrew tap repo exists yet under the real org
+# (confirmed: https://github.com/Chunkwang/homebrew-open-wispr returns 404).
+# Don't point this at a repo that doesn't exist -- skip cleanly until one
+# is created. Keep this check in sync with scripts/deploy.sh.
+if ! curl -sfo /dev/null "https://api.github.com/repos/${TAP_REPO}"; then
+  echo "Skipping: no Homebrew tap configured yet (${TAP_REPO} does not exist)."
+  echo "Create the tap repo, then re-run scripts/update-bottles.sh ${VERSION}."
+  exit 0
+fi
+
 DL_DIR=$(mktemp -d)
 trap 'rm -rf "${DL_DIR}"' EXIT
 
 echo "==> Downloading bottles from release ${TAG}..."
-gh release download "${TAG}" --pattern "*.bottle.tar.gz" --dir "${DL_DIR}" --repo human37/open-wispr
+gh release download "${TAG}" --pattern "*.bottle.tar.gz" --dir "${DL_DIR}" --repo Chunkwang/open-wispr
 
 BOTTLES_JSON="{"
 FIRST=true
@@ -51,7 +62,7 @@ fi
 echo "==> Updating tap formula with bottle SHAs..."
 
 if [ ! -d "${TAP_DIR}" ]; then
-  git clone git@github.com:human37/homebrew-open-wispr.git "${TAP_DIR}"
+  git clone "git@github.com:${TAP_REPO}.git" "${TAP_DIR}"
 fi
 git -C "${TAP_DIR}" pull --rebase
 
@@ -65,7 +76,7 @@ ruby -e '
   formula.gsub!(/\n  bottle do.*?  end\n/m, "\n")
 
   lines = ["  bottle do"]
-  lines << "    root_url \"https://github.com/human37/open-wispr/releases/download/#{tag}\""
+  lines << "    root_url \"https://github.com/Chunkwang/open-wispr/releases/download/#{tag}\""
   bottles.each do |os_tag, sha|
     lines << "    sha256 cellar: :any, #{os_tag}: \"#{sha}\""
   end

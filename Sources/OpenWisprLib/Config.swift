@@ -5,6 +5,13 @@ public struct LanguageOption: Equatable, Sendable {
     public let name: String
 }
 
+/// Whether dictation is passed through the Pro rewrite service.
+/// `off` (default) never touches the network; `auto` rewrites on release.
+public enum RewriteMode: String, Codable, Equatable {
+    case off
+    case auto
+}
+
 public struct Config: Codable {
     public var hotkeys: [HotkeyConfig]
     public var modelPath: String?
@@ -16,6 +23,44 @@ public struct Config: Codable {
     public var toggleMode: FlexBool?
     public var audioInputDeviceID: UInt32?
     public var audioInputDeviceUID: String?
+    public var rewriteMode: RewriteMode
+    public var editHotkey: HotkeyConfig?
+    public var askHotkey: HotkeyConfig?
+    public var analyticsOptIn: FlexBool?
+    public var localLLMEnabled: FlexBool?
+    public var localLLMURL: String?
+    public var localLLMModel: String?
+    /// Off unless config.json explicitly sets it. Gates `FoundationModelsPipeline`
+    /// (Apple's on-device Foundation Models framework, macOS 26+) as a rewrite
+    /// pipeline. Absent in old configs, so an old config.json keeps this off,
+    /// matching the same "ships off" rule as `localLLMEnabled`/`agentLayerEnabled`.
+    /// Even when true, `RewriteGate`/`RewriteCoordinator` only use it when
+    /// `FoundationModelsPipeline.isAvailable` is also true (real device/Apple
+    /// Intelligence eligibility) — this flag alone never forces the on-device
+    /// path over a graceful fallback.
+    public var onDeviceAIEnabled: FlexBool?
+    public var translateToEnglish: FlexBool?
+    /// Off unless a config.json explicitly sets it. Gates the v2 agent-layer
+    /// surfaces (Edit and Ask context/screen awareness) independently of, and
+    /// before, consent and sign-in — see `EditGate`/`AskGate`. Absent in old
+    /// configs, so an old config.json keeps this off, matching CLAUDE.md's rule
+    /// that this flag ships off by default.
+    public var agentLayerEnabled: FlexBool?
+
+    /// Whether Edit/Ask may run at all, before consent or sign-in are even
+    /// considered. True only when config.json sets `agentLayerEnabled`, or, in a
+    /// DEBUG build only, when `OPENWISPR_AGENT_LAYER=1` is set in the process
+    /// environment for local testing. The environment path never persists
+    /// anything to config.json or UserDefaults, so it cannot leak from a DEBUG
+    /// session into a release build sharing the same files, and it does not
+    /// exist at all in a release binary (the `#if DEBUG` block is compiled out).
+    public var isAgentLayerEnabled: Bool {
+        if agentLayerEnabled?.value == true { return true }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["OPENWISPR_AGENT_LAYER"] == "1" { return true }
+        #endif
+        return false
+    }
 
     public var hotkey: HotkeyConfig {
         get { hotkeys[0] }
@@ -23,9 +68,15 @@ public struct Config: Codable {
     }
 
     public func hotkeySummary() -> String {
-        hotkeys
-            .map { KeyCodes.describe(keyCode: $0.keyCode, modifiers: $0.modifiers) }
-            .joined(separator: " · ")
+        var parts = hotkeys.map { KeyCodes.describe(keyCode: $0.keyCode, modifiers: $0.modifiers) }
+        // Only shown when the founder explicitly set one in config.json — the
+        // Context/Ask hotkey has no synthesized default. Enabling the agent
+        // layer flag alone must not start listening for a hotkey nobody chose
+        // (see AppDelegate's hotkey registration, which follows the same rule).
+        if let ask = askHotkey {
+            parts.append("Context/Edit: " + KeyCodes.describe(keyCode: ask.keyCode, modifiers: ask.modifiers))
+        }
+        return parts.joined(separator: " · ")
     }
 
     private static func deduplicateHotkeys(_ list: [HotkeyConfig]) -> [HotkeyConfig] {
@@ -48,6 +99,16 @@ public struct Config: Codable {
         case toggleMode
         case audioInputDeviceID
         case audioInputDeviceUID
+        case rewriteMode
+        case editHotkey
+        case askHotkey
+        case analyticsOptIn
+        case localLLMEnabled
+        case localLLMURL
+        case localLLMModel
+        case onDeviceAIEnabled
+        case translateToEnglish
+        case agentLayerEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -70,6 +131,18 @@ public struct Config: Codable {
         self.toggleMode = try c.decodeIfPresent(FlexBool.self, forKey: .toggleMode)
         self.audioInputDeviceID = try c.decodeIfPresent(UInt32.self, forKey: .audioInputDeviceID)
         self.audioInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .audioInputDeviceUID)
+        let rawMode = (try? c.decodeIfPresent(String.self, forKey: .rewriteMode)) ?? nil
+        self.rewriteMode = rawMode
+            .flatMap { RewriteMode(rawValue: $0.trimmingCharacters(in: .whitespaces).lowercased()) } ?? .off
+        self.editHotkey = try c.decodeIfPresent(HotkeyConfig.self, forKey: .editHotkey)
+        self.askHotkey = try c.decodeIfPresent(HotkeyConfig.self, forKey: .askHotkey)
+        self.analyticsOptIn = try c.decodeIfPresent(FlexBool.self, forKey: .analyticsOptIn)
+        self.localLLMEnabled = try c.decodeIfPresent(FlexBool.self, forKey: .localLLMEnabled)
+        self.localLLMURL = try c.decodeIfPresent(String.self, forKey: .localLLMURL)
+        self.localLLMModel = try c.decodeIfPresent(String.self, forKey: .localLLMModel)
+        self.onDeviceAIEnabled = try c.decodeIfPresent(FlexBool.self, forKey: .onDeviceAIEnabled)
+        self.translateToEnglish = try c.decodeIfPresent(FlexBool.self, forKey: .translateToEnglish)
+        self.agentLayerEnabled = try c.decodeIfPresent(FlexBool.self, forKey: .agentLayerEnabled)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -85,6 +158,16 @@ public struct Config: Codable {
         try c.encodeIfPresent(toggleMode, forKey: .toggleMode)
         try c.encodeIfPresent(audioInputDeviceID, forKey: .audioInputDeviceID)
         try c.encodeIfPresent(audioInputDeviceUID, forKey: .audioInputDeviceUID)
+        try c.encode(rewriteMode, forKey: .rewriteMode)
+        try c.encodeIfPresent(editHotkey, forKey: .editHotkey)
+        try c.encodeIfPresent(askHotkey, forKey: .askHotkey)
+        try c.encodeIfPresent(analyticsOptIn, forKey: .analyticsOptIn)
+        try c.encodeIfPresent(localLLMEnabled, forKey: .localLLMEnabled)
+        try c.encodeIfPresent(localLLMURL, forKey: .localLLMURL)
+        try c.encodeIfPresent(localLLMModel, forKey: .localLLMModel)
+        try c.encodeIfPresent(onDeviceAIEnabled, forKey: .onDeviceAIEnabled)
+        try c.encodeIfPresent(translateToEnglish, forKey: .translateToEnglish)
+        try c.encodeIfPresent(agentLayerEnabled, forKey: .agentLayerEnabled)
     }
 
     public init(
@@ -97,7 +180,16 @@ public struct Config: Codable {
         maxRecordings: Int?,
         toggleMode: FlexBool?,
         audioInputDeviceID: UInt32? = nil,
-        audioInputDeviceUID: String? = nil
+        audioInputDeviceUID: String? = nil,
+        rewriteMode: RewriteMode = .off,
+        editHotkey: HotkeyConfig? = nil,
+        askHotkey: HotkeyConfig? = nil,
+        localLLMEnabled: FlexBool? = nil,
+        localLLMURL: String? = nil,
+        localLLMModel: String? = nil,
+        onDeviceAIEnabled: FlexBool? = nil,
+        translateToEnglish: FlexBool? = nil,
+        agentLayerEnabled: FlexBool? = nil
     ) {
         self.hotkeys = hotkeys.isEmpty
             ? [HotkeyConfig(keyCode: 63, modifiers: [])]
@@ -111,6 +203,15 @@ public struct Config: Codable {
         self.toggleMode = toggleMode
         self.audioInputDeviceID = audioInputDeviceID
         self.audioInputDeviceUID = audioInputDeviceUID
+        self.rewriteMode = rewriteMode
+        self.editHotkey = editHotkey
+        self.askHotkey = askHotkey
+        self.localLLMEnabled = localLLMEnabled
+        self.localLLMURL = localLLMURL
+        self.localLLMModel = localLLMModel
+        self.onDeviceAIEnabled = onDeviceAIEnabled
+        self.translateToEnglish = translateToEnglish
+        self.agentLayerEnabled = agentLayerEnabled
     }
 
     public static let supportedLanguages: [LanguageOption] = [

@@ -65,15 +65,30 @@ class TextInserter {
         self.scheduleRestore = scheduleRestore
     }
 
-    func insert(text: String) {
+    /// The pasteboard type that signals clipboard managers to hide this entry.
+    /// Apps like 1Password, Paste, Maccy, and CopyClip honour this convention.
+    /// See: https://nspasteboard.org
+    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+
+    /// The pasteboard type that tells macOS to keep the item on this device
+    /// only, preventing Universal Clipboard from syncing it to iPhones/iPads.
+    private static let localOnlyType = NSPasteboard.PasteboardType("com.apple.pasteboard.local-only")
+
+    /// `token` is the dictation-timing correlation id (DictationTiming.swift),
+    /// purely for the local debug latency log — logging only, `nil` by
+    /// default so every other caller (including the tests below) is
+    /// unaffected. Never pass dictated text or anything other than the token
+    /// here.
+    func insert(text: String, token: String? = nil) {
         let pasteboard = pasteboardProvider()
         let savedItems = savePasteboard(pasteboard)
 
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        Self.writeConcealed(text, to: pasteboard)
+
         let writeChangeCount = pasteboard.changeCount
 
         pasteAction(pasteKeyCode)
+        DictationTiming.mark(token, .pasteDone)
 
         scheduleRestore(restoreDelay) {
             // If something else has written to the pasteboard since our write
@@ -104,6 +119,27 @@ class TextInserter {
             return item
         }
         pasteboard.writeItems(pasteboardItems)
+    }
+
+    /// Writes `text` to `pasteboard` as a pasteboard item carrying the same
+    /// concealment/local-only markers `insert(text:)` uses, so clipboard
+    /// managers skip it and Universal Clipboard doesn't sync it. Unlike
+    /// `insert(text:)`, this does not save/restore the previous clipboard —
+    /// that save/restore is specific to the paste-then-restore dictation
+    /// flow. Callers that just need to put sensitive text on the clipboard
+    /// (e.g. AskOverlay's "Copy & Dismiss", which can hold screen-derived
+    /// text) call this directly.
+    static func writeConcealed(_ text: String, to pasteboard: any TextInsertionPasteboard) {
+        pasteboard.clearContents()
+
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        // The value of the concealed marker doesn't matter — its presence
+        // is the signal. We use an empty string.
+        item.setString("", forType: concealedType)
+        // Prevent Universal Clipboard from syncing this text.
+        item.setData(Data(), forType: localOnlyType)
+        pasteboard.writeItems([item])
     }
 
     private static func resolveKeyCode(for target: Character) -> CGKeyCode? {

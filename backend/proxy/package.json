@@ -4,8 +4,14 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:mock": "node scripts/mock-supabase.mjs",
+    "dev:mock:stripe": "node scripts/mock-stripe.mjs",
+    "dev:token": "node scripts/mint-dev-token.mjs",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+    "test": "vitest run",
+    "test:mock": "node --test scripts/mock-supabase.test.mjs",
+    "eval:rewrite": "node eval/run.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -13,8 +19,10 @@
     "stripe": "^17.3.0"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^5.20260911.1",
     "typescript": "^5.6.3",
+    "vitest": "^4.1.11",
     "wrangler": "^4.4.0"
   }
 }

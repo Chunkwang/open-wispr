@@ -369,6 +369,137 @@ final class ConfigTests: XCTestCase {
         XCTAssertNotNil(obj?["hotkey"])
         XCTAssertNotNil(obj?["hotkeys"])
     }
+
+    // MARK: - rewriteMode
+
+    private func decodeConfig(rewriteModeJSON: String?) throws -> Config {
+        let extra = rewriteModeJSON.map { ", \"rewriteMode\": \($0)" } ?? ""
+        let json = """
+        {
+            "hotkey": {"keyCode": 96, "modifiers": []},
+            "modelSize": "small.en",
+            "language": "fr",
+            "maxRecordings": 7\(extra)
+        }
+        """.data(using: .utf8)!
+        return try Config.decode(from: json)
+    }
+
+    func testRewriteModeDefaultsToOffWhenMissing() throws {
+        let config = try decodeConfig(rewriteModeJSON: nil)
+        XCTAssertEqual(config.rewriteMode, .off)
+    }
+
+    func testOldConfigWithoutRewriteModeKeepsEveryOtherSetting() throws {
+        let config = try decodeConfig(rewriteModeJSON: nil)
+        XCTAssertEqual(config.hotkey, HotkeyConfig(keyCode: 96, modifiers: []))
+        XCTAssertEqual(config.modelSize, "small.en")
+        XCTAssertEqual(config.language, "fr")
+        XCTAssertEqual(config.maxRecordings, 7)
+    }
+
+    func testRewriteModeDecodesOff() throws {
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "\"off\"").rewriteMode, .off)
+    }
+
+    func testRewriteModeDecodesAuto() throws {
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "\"auto\"").rewriteMode, .auto)
+    }
+
+    func testRewriteModeIsCaseAndWhitespaceTolerant() throws {
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "\" AUTO \"").rewriteMode, .auto)
+    }
+
+    func testRewriteModeUnknownStringFallsBackToOffAndKeepsOtherSettings() throws {
+        let config = try decodeConfig(rewriteModeJSON: "\"banana\"")
+        XCTAssertEqual(config.rewriteMode, .off)
+        XCTAssertEqual(config.language, "fr")
+        XCTAssertEqual(config.maxRecordings, 7)
+    }
+
+    func testRewriteModeWrongTypeFallsBackToOff() throws {
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "5").rewriteMode, .off)
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "true").rewriteMode, .off)
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "null").rewriteMode, .off)
+        XCTAssertEqual(try decodeConfig(rewriteModeJSON: "{\"a\": 1}").rewriteMode, .off)
+    }
+
+    func testRewriteModeRoundTrips() throws {
+        var config = Config.defaultConfig
+        XCTAssertEqual(config.rewriteMode, .off)
+        config.rewriteMode = .auto
+        let data = try JSONEncoder().encode(config)
+        XCTAssertEqual(try Config.decode(from: data).rewriteMode, .auto)
+    }
+
+    // MARK: - agentLayerEnabled (Day 3 hardening, finding 5)
+
+    func testOldConfigWithoutAgentLayerEnabledDefaultsOff() throws {
+        // An old config.json predates this key entirely: it must load, and the
+        // flag must default to false, matching CLAUDE.md's "ships off" rule.
+        let config = try decodeConfig(rewriteModeJSON: nil)
+        XCTAssertNil(config.agentLayerEnabled)
+        XCTAssertFalse(config.isAgentLayerEnabled)
+    }
+
+    func testAgentLayerEnabledDecodesTrue() throws {
+        let json = """
+        {
+            "hotkey": {"keyCode": 96, "modifiers": []},
+            "modelSize": "small.en",
+            "language": "fr",
+            "maxRecordings": 7,
+            "agentLayerEnabled": true
+        }
+        """.data(using: .utf8)!
+        let config = try Config.decode(from: json)
+        XCTAssertTrue(config.isAgentLayerEnabled)
+    }
+
+    func testAgentLayerEnabledDefaultsFalseWhenAbsent() {
+        XCTAssertFalse(Config.defaultConfig.isAgentLayerEnabled)
+    }
+
+    func testAgentLayerEnabledRoundTrips() throws {
+        var config = Config.defaultConfig
+        config.agentLayerEnabled = FlexBool(true)
+        let data = try JSONEncoder().encode(config)
+        XCTAssertTrue(try Config.decode(from: data).isAgentLayerEnabled)
+    }
+
+    // MARK: - onDeviceAIEnabled (Foundation Models Phase 1)
+
+    func testOldConfigWithoutOnDeviceAIEnabledDefaultsOff() throws {
+        // An old config.json predates this key entirely: it must load, and the
+        // flag must default to false/nil, matching CLAUDE.md's "ships off" rule.
+        let config = try decodeConfig(rewriteModeJSON: nil)
+        XCTAssertNil(config.onDeviceAIEnabled)
+    }
+
+    func testOnDeviceAIEnabledDefaultsFalseWhenAbsent() {
+        XCTAssertNil(Config.defaultConfig.onDeviceAIEnabled)
+    }
+
+    func testOnDeviceAIEnabledDecodesTrue() throws {
+        let json = """
+        {
+            "hotkey": {"keyCode": 96, "modifiers": []},
+            "modelSize": "small.en",
+            "language": "fr",
+            "maxRecordings": 7,
+            "onDeviceAIEnabled": true
+        }
+        """.data(using: .utf8)!
+        let config = try Config.decode(from: json)
+        XCTAssertEqual(config.onDeviceAIEnabled?.value, true)
+    }
+
+    func testOnDeviceAIEnabledRoundTrips() throws {
+        var config = Config.defaultConfig
+        config.onDeviceAIEnabled = FlexBool(true)
+        let data = try JSONEncoder().encode(config)
+        XCTAssertEqual(try Config.decode(from: data).onDeviceAIEnabled?.value, true)
+    }
 }
 
 private struct FlexBoolWrapper: Codable {

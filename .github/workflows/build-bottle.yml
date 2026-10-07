@@ -10,17 +10,36 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Build bottle
+      # TODO(D1 follow-up): no Homebrew tap repo exists yet under the real
+      # org (confirmed: https://github.com/Chunkwang/homebrew-open-wispr
+      # returns 404). This is an automated, no-human-in-the-loop workflow,
+      # so fail it with a clear message instead of a cryptic brew error --
+      # and never fall back to tapping/installing from anywhere else.
+      # Keep this check in sync with scripts/deploy.sh and
+      # scripts/update-bottles.sh.
+      - name: Check Homebrew tap exists
+        id: tap_check
         run: |
-          brew tap human37/open-wispr
-          brew install --build-bottle human37/open-wispr/open-wispr
-          brew bottle --no-rebuild human37/open-wispr/open-wispr
+          if curl -sfo /dev/null "https://api.github.com/repos/Chunkwang/homebrew-open-wispr"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No Homebrew tap configured yet (Chunkwang/homebrew-open-wispr does not exist). Skipping bottle build -- create the tap repo first."
+          fi
+
+      - name: Build bottle
+        if: steps.tap_check.outputs.exists == 'true'
+        run: |
+          brew tap Chunkwang/open-wispr
+          brew install --build-bottle Chunkwang/open-wispr/open-wispr
+          brew bottle --no-rebuild Chunkwang/open-wispr/open-wispr
 
       - name: Upload bottle to release
+        if: steps.tap_check.outputs.exists == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for f in open-wispr--*.bottle.tar.gz; do
             mv "$f" "$(echo "$f" | sed 's/--/-/')"
           done
-          gh release upload "${{ github.event.release.tag_name }}" open-wispr-*.bottle.tar.gz --repo human37/open-wispr
+          gh release upload "${{ github.event.release.tag_name }}" open-wispr-*.bottle.tar.gz --repo Chunkwang/open-wispr
