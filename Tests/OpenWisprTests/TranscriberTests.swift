@@ -243,6 +243,47 @@ final class TranscriberTests: XCTestCase {
         XCTAssertTrue(args.contains("--suppress-nst"))
     }
 
+    // MARK: - bundledBackendPath: GGML_BACKEND_PATH resolution (Task 8.2 follow-up)
+    //
+    // whisper.cpp dlopen()s its compute backend from a plugin file bundle-app.sh
+    // embeds at Contents/Frameworks/ggml-backends/ inside the app. This must be
+    // set only when that file actually exists -- an unbundled dev/test run (no
+    // app bundle structure at all) must leave the environment untouched so
+    // whisper-cli falls through to its own Homebrew-fallback resolution exactly
+    // as it does today. Setting it to a path that doesn't exist is strictly worse
+    // than not setting it, since ggml dlopen()s the value directly with no
+    // fallback scan.
+
+    func testBundledBackendPathReturnsPathWhenBackendFileExists() {
+        let path = Transcriber.bundledBackendPath(
+            bundlePath: "/Applications/Murmur.app",
+            fileExists: { candidate in
+                candidate == "/Applications/Murmur.app/Contents/Frameworks/ggml-backends/libggml-cpu-apple_m1.so"
+            }
+        )
+        XCTAssertEqual(path, "/Applications/Murmur.app/Contents/Frameworks/ggml-backends/libggml-cpu-apple_m1.so")
+    }
+
+    func testBundledBackendPathReturnsNilWhenUnbundled() {
+        // Simulates `scripts/dev.sh` / `swift test` / a bare `.build/release/open-wispr`
+        // binary, where Bundle.main has no Contents/Frameworks structure at all.
+        let path = Transcriber.bundledBackendPath(
+            bundlePath: "/Users/dev/repo/.build/release",
+            fileExists: { _ in false }
+        )
+        XCTAssertNil(path)
+    }
+
+    func testBundledBackendPathReturnsNilWhenAppBundleLacksEmbeddedBackend() {
+        // A bundle built before Task 8.2's fix, or missing the plugin for some
+        // other reason -- must not fabricate a path that isn't actually there.
+        let path = Transcriber.bundledBackendPath(
+            bundlePath: "/Applications/Murmur.app",
+            fileExists: { _ in false }
+        )
+        XCTAssertNil(path)
+    }
+
     // MARK: - resolveOutput: exit-code / stdout / stderr success-failure decision
     //
     // whisper-cli's argument parser doesn't fail on an unrecognized flag: it exits 0

@@ -27,6 +27,24 @@ public class Transcriber {
         process.executableURL = URL(fileURLWithPath: whisperPath)
         process.arguments = arguments(modelPath: modelPath, audioURL: audioURL)
 
+        // Task 8.2 follow-up: whisper.cpp's ggml-base dylib dlopen()s its compute
+        // backend (CPU/BLAS/Metal) from a separate plugin file at runtime rather than
+        // statically linking it -- `otool -L` never shows this. bundle-app.sh embeds
+        // the plugin at Contents/Frameworks/ggml-backends/ inside the app, but only
+        // the launching process knows the app's install location at runtime, so this
+        // env var has to be set here, not baked in at bundle-build time (that would
+        // break the moment a user moved the .app). When unbundled (dev.sh, swift
+        // test, a bare .build/release binary), bundledBackendPath returns nil and we
+        // leave the environment untouched -- whisper-cli then falls through to its
+        // own Homebrew-fallback resolution exactly as it does today. Never set this
+        // to a path that doesn't exist: ggml dlopen()s the value directly with no
+        // fallback scan, so a bad path crashes harder than an unset one.
+        if let backendPath = Transcriber.bundledBackendPath(bundlePath: Bundle.main.bundlePath) {
+            var env = ProcessInfo.processInfo.environment
+            env["GGML_BACKEND_PATH"] = backendPath
+            process.environment = env
+        }
+
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
@@ -109,6 +127,21 @@ public class Transcriber {
         }
 
         return args
+    }
+
+    // Pure lookup split out so it's testable without a real app bundle or Process
+    // run, the same way `arguments(modelPath:audioURL:)` is. Returns the path to
+    // bundle-app.sh's embedded ggml backend plugin when it exists, nil otherwise
+    // (unbundled dev/test runs, or a bundle built before Task 8.2's fix). The
+    // apple_m1 plugin is verified to also run correctly on newer (M2) Apple
+    // Silicon, so one hardcoded filename is correct today -- no per-chip
+    // detection needed here (see bundle-app.sh's note on the same point).
+    static func bundledBackendPath(
+        bundlePath: String,
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> String? {
+        let candidate = bundlePath + "/Contents/Frameworks/ggml-backends/libggml-cpu-apple_m1.so"
+        return fileExists(candidate) ? candidate : nil
     }
 
     private var effectiveWhisperPrompt: String? {
