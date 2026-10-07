@@ -2,7 +2,7 @@
 
 *Every claim in this file is traced to the source code that proves it, and where possible, to a command you can run yourself. If a claim and the code disagree, the code is right and this file needs fixing.*
 
-*Last audited: 2026-09-26.*
+*Last audited: 2026-10-07.*
 
 ---
 
@@ -86,9 +86,10 @@ Each consent record stores the version of the disclosure text. Bumping the versi
 | Evidence | Location |
 |---|---|
 | Hardcoded blocklist of ~50 bundle IDs and ~30 prefix patterns | [`ExcludedApps.swift`](Sources/OpenWisprLib/ExcludedApps.swift) |
-| `AskCoordinator` and `EditCoordinator` abort before any network call if the frontmost app is excluded | [`AskCoordinator.swift:92–103`](Sources/OpenWisprLib/AskCoordinator.swift), [`EditCoordinator.swift:87–98`](Sources/OpenWisprLib/EditCoordinator.swift) |
+| `AskCoordinator` and `EditCoordinator` abort before any network call if the frontmost app is excluded | [`AskCoordinator.swift:148,155`](Sources/OpenWisprLib/AskCoordinator.swift), [`EditCoordinator.swift:109,135`](Sources/OpenWisprLib/EditCoordinator.swift) |
 | `ScreenCapturer` captures only the frontmost window (`SCContentFilter(desktopIndependentWindow:)`), so no other app's pixels ever enter memory, and refuses to capture that window at all if its own app is on the exclusion list | [`ScreenCapturer.swift`](Sources/OpenWisprLib/ScreenCapturer.swift) |
 | Secure text fields (password fields) are detected by AX role and excluded at the `ContextSnapshot` level | [`ContextSnapshot.swift:37,144–158`](Sources/OpenWisprLib/ContextSnapshot.swift) |
+| Secure keyboard input (e.g. a Terminal `sudo` prompt or system password dialog) is a separate, system-wide check — not just an AX-detectable field — and blocks Ask, Edit, *and* plain dictation's paste from ever reaching the network or the secure context | [`AccessibilityContextReader.swift`](Sources/OpenWisprLib/AccessibilityContextReader.swift) (`captureSecureInputStatus`/`SecureInputCheck`); call sites: [`AppDelegate.swift:618`](Sources/OpenWisprLib/AppDelegate.swift) (dictation), [`AskCoordinator.swift:143`](Sources/OpenWisprLib/AskCoordinator.swift), [`EditCoordinator.swift:130`](Sources/OpenWisprLib/EditCoordinator.swift) |
 
 ---
 
@@ -111,7 +112,7 @@ Each consent record stores the version of the disclosure text. Bumping the versi
 | Evidence | Location |
 |---|---|
 | `InjectionDetector` scans OCR text for known injection phrases | [`InjectionDetector.swift`](Sources/OpenWisprLib/InjectionDetector.swift) |
-| `AskCoordinator` drops the request if injection is detected | [`AskCoordinator.swift:128–131`](Sources/OpenWisprLib/AskCoordinator.swift) |
+| `AskCoordinator` drops the request if injection is detected, in selected text, the window title, or OCR'd screen text | [`AskCoordinator.swift:164,168,225`](Sources/OpenWisprLib/AskCoordinator.swift) |
 
 ---
 
@@ -121,9 +122,9 @@ Each consent record stores the version of the disclosure text. Bumping the versi
 
 | Evidence | Location |
 |---|---|
-| Content-free request logging (status, latency, hashed user ID only) | [`backend/proxy/src/logging.ts`](backend/proxy/src/logging.ts) |
+| Content-free request logging (event, status, latency, SHA-256-truncated user hash only) | [`backend/proxy/src/index.ts:326–334`](backend/proxy/src/index.ts) (`logRequest`) |
 | No-content-in-logs test | [`backend/proxy/test/`](backend/proxy/test/) |
-| Rate limiting uses Durable Objects with counters only, never content | [`backend/proxy/src/quota.ts`](backend/proxy/src/quota.ts) |
+| Rate limiting uses Durable Objects with counters only, never content | [`backend/proxy/src/quotaCounter.ts`](backend/proxy/src/quotaCounter.ts), [`backend/proxy/src/rateLimit.ts`](backend/proxy/src/rateLimit.ts) |
 
 ---
 
