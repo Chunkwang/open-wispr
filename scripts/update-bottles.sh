@@ -26,7 +26,7 @@ DL_DIR=$(mktemp -d)
 trap 'rm -rf "${DL_DIR}"' EXIT
 
 echo "==> Downloading bottles from release ${TAG}..."
-gh release download "${TAG}" --pattern "*.bottle.tar.gz" --dir "${DL_DIR}" --repo Chunkwang/open-wispr
+gh release download "${TAG}" --pattern "*.bottle.tar.gz" --dir "${DL_DIR}" --repo Chunkwang/new-product-voice-idea
 
 BOTTLES_JSON="{"
 FIRST=true
@@ -76,7 +76,7 @@ ruby -e '
   formula.gsub!(/\n  bottle do.*?  end\n/m, "\n")
 
   lines = ["  bottle do"]
-  lines << "    root_url \"https://github.com/Chunkwang/open-wispr/releases/download/#{tag}\""
+  lines << "    root_url \"https://github.com/Chunkwang/new-product-voice-idea/releases/download/#{tag}\""
   bottles.each do |os_tag, sha|
     lines << "    sha256 cellar: :any, #{os_tag}: \"#{sha}\""
   end

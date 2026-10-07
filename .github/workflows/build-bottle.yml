@@ -30,9 +30,9 @@ jobs:
       - name: Build bottle
         if: steps.tap_check.outputs.exists == 'true'
         run: |
-          brew tap Chunkwang/open-wispr
-          brew install --build-bottle Chunkwang/open-wispr/open-wispr
-          brew bottle --no-rebuild Chunkwang/open-wispr/open-wispr
+          brew tap Chunkwang/new-product-voice-idea
+          brew install --build-bottle Chunkwang/new-product-voice-idea/open-wispr
+          brew bottle --no-rebuild Chunkwang/new-product-voice-idea/open-wispr
 
       - name: Upload bottle to release
         if: steps.tap_check.outputs.exists == 'true'
@@ -42,4 +42,4 @@ jobs:
           for f in open-wispr--*.bottle.tar.gz; do
             mv "$f" "$(echo "$f" | sed 's/--/-/')"
           done
-          gh release upload "${{ github.event.release.tag_name }}" open-wispr-*.bottle.tar.gz --repo Chunkwang/open-wispr
+          gh release upload "${{ github.event.release.tag_name }}" open-wispr-*.bottle.tar.gz --repo Chunkwang/new-product-voice-idea

@@ -12,7 +12,7 @@ NC='\033[0m'
 SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
 SPIN_PID=""
 LOG=/opt/homebrew/var/log/open-wispr.log
-TAP_REPO="Chunkwang/open-wispr"
+TAP_REPO="Chunkwang/new-product-voice-idea"
 HOMEBREW_TAP_REPO="Chunkwang/homebrew-open-wispr"
 
 cleanup() {

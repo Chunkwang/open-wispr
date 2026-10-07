@@ -67,13 +67,13 @@ ${COMMITS}
 Write concise GitHub release notes in markdown. Use these sections only if relevant: ### What's New, ### Bug Fixes, ### Other Changes. Use bullet points. Don't include commit hashes. Keep it short and user-facing -- skip internal/dev-only changes. Always end with an ### Upgrade section containing a code block with: brew update && brew upgrade open-wispr && brew services restart open-wispr")
 
 echo "==> Creating GitHub Release..."
-gh release create "${TAG}" --repo Chunkwang/open-wispr --notes "${NOTES}"
+gh release create "${TAG}" --repo Chunkwang/new-product-voice-idea --notes "${NOTES}"
 
 echo "==> Waiting for bottle builds..."
 sleep 15
 RUN_ID=""
 for _ in $(seq 1 30); do
-  RUN_ID=$(gh run list --workflow=build-bottle.yml --event=release --limit=1 --json databaseId --jq '.[0].databaseId' --repo Chunkwang/open-wispr 2>/dev/null)
+  RUN_ID=$(gh run list --workflow=build-bottle.yml --event=release --limit=1 --json databaseId --jq '.[0].databaseId' --repo Chunkwang/new-product-voice-idea 2>/dev/null)
   if [ -n "$RUN_ID" ]; then
     break
   fi
@@ -85,7 +85,7 @@ if [ -z "$RUN_ID" ]; then
   echo "Run 'bash scripts/update-bottles.sh ${VERSION}' manually after bottles are built."
 else
   echo "==> Watching bottle build (run ${RUN_ID})..."
-  gh run watch "$RUN_ID" --repo Chunkwang/open-wispr
+  gh run watch "$RUN_ID" --repo Chunkwang/new-product-voice-idea
   bash "${REPO_DIR}/scripts/update-bottles.sh" "$VERSION"
 fi
 
