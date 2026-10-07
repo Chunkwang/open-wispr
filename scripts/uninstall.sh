@@ -22,7 +22,7 @@ ok "Stopped"
 
 step "Removing formula and tap"
 brew uninstall --force open-wispr 2>/dev/null || true
-brew untap human37/open-wispr 2>/dev/null || true
+brew untap Chunkwang/open-wispr 2>/dev/null || true
 ok "Removed"
 
 step "Removing app bundle"
@@ -44,5 +44,5 @@ printf "  ${DIM}─────────────────────�
 printf "  ${GREEN}${BOLD}Uninstalled.${NC}\n"
 printf "\n"
 printf "  To reinstall:\n"
-printf "  ${BOLD}curl -fsSL https://raw.githubusercontent.com/human37/open-wispr/main/scripts/install.sh | bash${NC}\n"
+printf "  ${BOLD}curl -fsSL https://raw.githubusercontent.com/Chunkwang/open-wispr/main/scripts/install.sh | bash${NC}\n"
 printf "\n"

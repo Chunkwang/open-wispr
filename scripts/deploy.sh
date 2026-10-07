@@ -32,15 +32,25 @@ git -C "${REPO_DIR}" tag -f "${TAG}"
 git -C "${REPO_DIR}" push origin main --tags
 
 echo "==> Updating tap formula..."
-if [ ! -d "${TAP_DIR}" ]; then
-  git clone git@github.com:human37/homebrew-open-wispr.git "${TAP_DIR}"
+# TODO(D1 follow-up): no Homebrew tap repo exists yet under the real org
+# (confirmed: https://github.com/Chunkwang/homebrew-open-wispr returns 404).
+# Don't point this at a repo that doesn't exist -- skip until one is created
+# and this TAP_REPO is updated.
+TAP_REPO="Chunkwang/homebrew-open-wispr"
+if ! curl -sfo /dev/null "https://api.github.com/repos/${TAP_REPO}"; then
+  echo "Skipping: no Homebrew tap configured yet (${TAP_REPO} does not exist)."
+  echo "Create the tap repo, then re-run, or run scripts/update-bottles.sh ${VERSION} manually once it exists."
+else
+  if [ ! -d "${TAP_DIR}" ]; then
+    git clone "git@github.com:${TAP_REPO}.git" "${TAP_DIR}"
+  fi
+  git -C "${TAP_DIR}" pull --rebase
+  sed -i '' "s|tag: \"v[^\"]*\"|tag: \"${TAG}\"|" "${TAP_DIR}/open-wispr.rb"
+  git -C "${TAP_DIR}" add open-wispr.rb
+  git -C "${TAP_DIR}" diff --cached --quiet && echo "Tap already up to date." || \
+    git -C "${TAP_DIR}" commit -m "Bump to ${TAG}"
+  git -C "${TAP_DIR}" push origin main
 fi
-git -C "${TAP_DIR}" pull --rebase
-sed -i '' "s|tag: \"v[^\"]*\"|tag: \"${TAG}\"|" "${TAP_DIR}/open-wispr.rb"
-git -C "${TAP_DIR}" add open-wispr.rb
-git -C "${TAP_DIR}" diff --cached --quiet && echo "Tap already up to date." || \
-  git -C "${TAP_DIR}" commit -m "Bump to ${TAG}"
-git -C "${TAP_DIR}" push origin main
 
 echo "==> Generating release notes..."
 PREV_TAG=$(git -C "${REPO_DIR}" describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
@@ -57,13 +67,13 @@ ${COMMITS}
 Write concise GitHub release notes in markdown. Use these sections only if relevant: ### What's New, ### Bug Fixes, ### Other Changes. Use bullet points. Don't include commit hashes. Keep it short and user-facing -- skip internal/dev-only changes. Always end with an ### Upgrade section containing a code block with: brew update && brew upgrade open-wispr && brew services restart open-wispr")
 
 echo "==> Creating GitHub Release..."
-gh release create "${TAG}" --repo human37/open-wispr --notes "${NOTES}"
+gh release create "${TAG}" --repo Chunkwang/open-wispr --notes "${NOTES}"
 
 echo "==> Waiting for bottle builds..."
 sleep 15
 RUN_ID=""
 for _ in $(seq 1 30); do
-  RUN_ID=$(gh run list --workflow=build-bottle.yml --event=release --limit=1 --json databaseId --jq '.[0].databaseId' --repo human37/open-wispr 2>/dev/null)
+  RUN_ID=$(gh run list --workflow=build-bottle.yml --event=release --limit=1 --json databaseId --jq '.[0].databaseId' --repo Chunkwang/open-wispr 2>/dev/null)
   if [ -n "$RUN_ID" ]; then
     break
   fi
@@ -75,7 +85,7 @@ if [ -z "$RUN_ID" ]; then
   echo "Run 'bash scripts/update-bottles.sh ${VERSION}' manually after bottles are built."
 else
   echo "==> Watching bottle build (run ${RUN_ID})..."
-  gh run watch "$RUN_ID" --repo human37/open-wispr
+  gh run watch "$RUN_ID" --repo Chunkwang/open-wispr
   bash "${REPO_DIR}/scripts/update-bottles.sh" "$VERSION"
 fi
 

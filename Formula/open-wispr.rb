@@ -1,7 +1,7 @@
 class OpenWispr < Formula
   desc "Push-to-talk voice dictation for macOS using Whisper"
-  homepage "https://github.com/human37/open-wispr"
-  url "https://github.com/human37/open-wispr.git", tag: "v0.9.1"
+  homepage "https://github.com/Chunkwang/open-wispr"
+  url "https://github.com/Chunkwang/open-wispr.git", tag: "v0.43.0"
   license "MIT"
 
   depends_on "whisper-cpp"
@@ -32,7 +32,7 @@ class OpenWispr < Formula
   def caveats
     <<~EOS
       Recommended: use the install script for guided setup:
-        curl -fsSL https://raw.githubusercontent.com/human37/open-wispr/main/scripts/install.sh | bash
+        curl -fsSL https://raw.githubusercontent.com/Chunkwang/open-wispr/main/scripts/install.sh | bash
 
       Or start manually:
         brew services start open-wispr

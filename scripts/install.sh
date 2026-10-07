@@ -12,6 +12,8 @@ NC='\033[0m'
 SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
 SPIN_PID=""
 LOG=/opt/homebrew/var/log/open-wispr.log
+TAP_REPO="Chunkwang/open-wispr"
+HOMEBREW_TAP_REPO="Chunkwang/homebrew-open-wispr"
 
 cleanup() {
     stop_spin
@@ -110,7 +112,7 @@ homebrew_trust_command() {
     if [ -n "$trust_command" ]; then
         printf "%s\n" "$trust_command"
     else
-        printf "brew trust --formula human37/open-wispr/open-wispr\n"
+        printf "brew trust --formula %s/open-wispr\n" "$TAP_REPO"
     fi
 }
 
@@ -131,7 +133,7 @@ die_homebrew_trust_error() {
     trust_command="$(homebrew_trust_command "$output")"
 
     printf "\n"
-    info "If you trust human37/open-wispr, run:"
+    info "If you trust ${TAP_REPO}, run:"
     printf "\n"
     printf "  ${BOLD}%s${NC}\n" "$trust_command"
     printf "\n"
@@ -198,9 +200,9 @@ if brew list open-wispr &>/dev/null || [ -d ~/Applications/OpenWispr.app ]; then
 
     brew services stop open-wispr </dev/null >/dev/null 2>&1 || true
     brew uninstall --force open-wispr </dev/null >/dev/null 2>&1 || true
-    brew untap human37/open-wispr </dev/null >/dev/null 2>&1 || true
-    tccutil reset Accessibility com.human37.open-wispr </dev/null >/dev/null 2>&1 || true
-    tccutil reset Microphone com.human37.open-wispr </dev/null >/dev/null 2>&1 || true
+    brew untap "${TAP_REPO}" </dev/null >/dev/null 2>&1 || true
+    tccutil reset Accessibility com.murmur.app </dev/null >/dev/null 2>&1 || true
+    tccutil reset Microphone com.murmur.app </dev/null >/dev/null 2>&1 || true
     rm -rf ~/Applications/OpenWispr.app
 
     stop_spin
@@ -210,17 +212,24 @@ fi
 # ── Step 2: Install ──────────────────────────────────────────────────
 step "Installing"
 
-start_spin "Tapping human37/open-wispr..."
-TAP_OUT=$(brew tap human37/open-wispr --force </dev/null 2>&1) || {
+# OPEN_WISPR_TEST_TAP_DIR is only ever set by scripts/test-install.sh's
+# brew stub, which never hits the network -- skip the live check there so
+# the test suite stays deterministic and offline.
+if [ -z "${OPEN_WISPR_TEST_TAP_DIR:-}" ] && ! curl -sfo /dev/null "https://api.github.com/repos/${HOMEBREW_TAP_REPO}"; then
+    die "No Homebrew tap published yet (${HOMEBREW_TAP_REPO} does not exist). There is nothing to install from Homebrew yet -- check back once it's published."
+fi
+
+start_spin "Tapping ${TAP_REPO}..."
+TAP_OUT=$(brew tap "${TAP_REPO}" --force </dev/null 2>&1) || {
     stop_spin
-    fail "Failed to tap human37/open-wispr"
+    fail "Failed to tap ${TAP_REPO}"
     info "$TAP_OUT"
     die "Make sure git is installed."
 }
 stop_spin
-ok "Tapped ${DIM}human37/open-wispr${NC}"
+ok "Tapped ${DIM}${TAP_REPO}${NC}"
 
-TAP_DIR="$(brew --repository human37/open-wispr 2>/dev/null)"
+TAP_DIR="$(brew --repository "${TAP_REPO}" 2>/dev/null)"
 if [ -n "$VERSION" ]; then
     FORMULA_COMMIT=$(git -C "$TAP_DIR" log --all --grep="v${VERSION}" --format=%H -1)
     if [ -z "$FORMULA_COMMIT" ]; then
