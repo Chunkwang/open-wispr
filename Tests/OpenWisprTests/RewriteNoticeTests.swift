@@ -109,6 +109,18 @@ final class RewriteNoticeTests: XCTestCase {
         XCTAssertTrue(notice.count <= 120)
     }
 
+    func testTheCannotDetermineSecureInputNoticePassesTheSameLint() {
+        let notice = DictationNotice.cannotDetermineSecureInput
+        XCTAssertFalse(notice.contains("!"))
+        for word in banned {
+            XCTAssertFalse(notice.lowercased().contains(word), word)
+        }
+        XCTAssertTrue(sentenceCount(notice) >= 1 && sentenceCount(notice) <= 2)
+        XCTAssertTrue(notice.contains("clipboard"))
+        XCTAssertTrue(notice.count <= 120)
+        XCTAssertNotEqual(notice, DictationNotice.secureInput, "must not claim the certainty a confirmed secure field has")
+    }
+
     func testSignedOutErrorsShareOneNotice() {
         XCTAssertEqual(RewriteError.unauthorized.userNotice, RewriteError.notAuthenticated.userNotice)
         XCTAssertTrue(RewriteError.unauthorized.userNotice?.contains("Sign in to keep using rewrite") ?? false)

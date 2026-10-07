@@ -41,7 +41,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     /// Never written to disk; dropped when the app quits.
     private(set) var lastRewritePair: (raw: String, rewritten: String)?
     /// True while a finished dictation is waiting to be pasted or being pasted.
-    /// The sign-in window checks it before touching the pasteboard.
+    /// The sign-in window checks it before touching the pasteboard. `@MainActor`
+    /// because `DictationSequencer.pendingCount` now is: both of this property's
+    /// callers (`SignInWindowController`, `SignInFlow`) are themselves
+    /// `@MainActor`, so this adds no new thread requirement for them.
+    @MainActor
     var isDictationInsertInFlight: Bool { (sequencer?.pendingCount ?? 0) > 0 }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
@@ -462,7 +466,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             print("Error: \(error.localizedDescription)")
             recordingLifecycle.recordingStartFailed()
             currentRecordingURL = nil
-            statusBar.state = .idle
+            if currentRecordingMode == .context {
+                DispatchQueue.main.async { AskOverlayController.shared.hide() }
+            }
+            // Previously fell straight back to .idle here with only a console
+            // print -- invisible to a real user, who would just see the
+            // hotkey appear to do nothing (e.g. after revoking Microphone
+            // access in System Settings mid-session). showNotice surfaces it
+            // the same way every other user-facing failure in this file does.
+            statusBar.showNotice(Copy.recordingFailedToStart)
         }
     }
 
@@ -525,7 +537,17 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                         // same snapshot — not a second, independent read — is
                         // handed to whichever coordinator gets chosen below.
                         let agentLayerActive = self.config.isAgentLayerEnabled && self.config.rewriteMode == .auto
-                        Task {
+                        // `@MainActor`: this task calls `self.sequencer.begin`/
+                        // `.finish` (both main-actor-isolated now) and touches
+                        // `statusBar`/`AskOverlayController` after the `await`
+                        // below. Without this annotation the task's isolation is
+                        // inferred from its creation context, which happens to be
+                        // `@MainActor`-recognised today (nested in
+                        // `DispatchQueue.main.async`) but that is an inference,
+                        // not a guarantee; spelling it out is what actually pins
+                        // the resumption to the main thread regardless of how the
+                        // enclosing closure is reached.
+                        Task { @MainActor in
                             let snapshot = agentLayerActive
                                 ? await DefaultAccessibilityContextReader.system().readSnapshot()
                                 : nil

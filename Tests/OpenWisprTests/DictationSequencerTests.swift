@@ -2,7 +2,10 @@ import XCTest
 @testable import OpenWisprLib
 
 /// Manual clock and scheduler plus a log of everything the sequencer does, so
-/// each rule can be tested without AppKit.
+/// each rule can be tested without AppKit. `@MainActor` because
+/// `DictationEnvironment` is now: XCTest runs these tests on the main thread
+/// already, so this only makes that fact visible to the type checker.
+@MainActor
 private final class FakeEnvironment: DictationEnvironment {
     var time: TimeInterval = 100
     var frontmost: Int32? = 1
@@ -50,6 +53,7 @@ private final class FakeEnvironment: DictationEnvironment {
     }
 }
 
+@MainActor
 final class DictationSequencerTests: XCTestCase {
     private func rewritten(_ text: String, notice: String? = nil) -> RewriteOutcome {
         RewriteOutcome(text: text, notice: notice, rewritten: true, attempted: true)
@@ -65,6 +69,55 @@ final class DictationSequencerTests: XCTestCase {
 
     private func secure(_ text: String) -> RewriteOutcome {
         RewriteOutcome(text: text, notice: nil, rewritten: false, attempted: false, secure: true)
+    }
+
+    /// Finding 2 of the Day 3 hardening pass: `secure` outcomes where
+    /// Accessibility couldn't even be asked (`SecureInputCheck.cannotDetermine`)
+    /// get a distinct notice from an ordinary `secure` outcome -- see
+    /// `testCannotDetermineOutcomeShowsItsOwnNoticeNotSecureInput` below.
+    private func cannotDetermineSecure(_ text: String) -> RewriteOutcome {
+        RewriteOutcome(text: text, notice: nil, rewritten: false, attempted: false, secure: true, secureStatusUnknown: true)
+    }
+
+    // MARK: - main-actor isolation (Day 3 hardening pass)
+
+    /// `DictationSequencer` and `DictationEnvironment` used to be guarded only
+    /// by a doc comment ("all calls happen on the main thread"), with nothing
+    /// enforcing it. A stress test that fired 500 concurrent `begin()`/
+    /// `finish()` calls at one instance from an unsynchronized background
+    /// queue reliably reproduced memory corruption (SIGSEGV, SIGABRT,
+    /// `NSInvalidArgumentException` on tagged-pointer objects -- the usual
+    /// signatures of two threads mutating the same `Dictionary` at once).
+    /// That test was the right way to *find* the bug, but the wrong thing to
+    /// leave in a permanent suite: a regression would crash the whole test
+    /// process instead of reporting one clean failure, and could take other,
+    /// unrelated tests down with it depending on run order.
+    ///
+    /// Both types are now `@MainActor`, which turns that doc comment into a
+    /// compile-time guarantee: a call to either from off the main actor
+    /// fails to build (see the attempt below, kept for reference, commented
+    /// out because it must not compile):
+    ///
+    ///     DispatchQueue.global().sync { seq.begin(raw: "x") }
+    ///     // error: call to main actor-isolated instance method 'begin(raw:)'
+    ///     // in a synchronous nonisolated context
+    ///
+    /// There is no way to exercise that failure from inside a passing test
+    /// (a test that fails to compile fails the whole build, not just itself),
+    /// so this test instead proves the guarantee is real rather than
+    /// decorative: it checks that running on the main actor actually means
+    /// running on the main thread, then drives one real `begin`/`finish`
+    /// round trip through the sequencer to tie that assertion to an actual
+    /// call path instead of asserting something unrelated.
+    func testDictationSequencerCallsReallyRunOnTheMainThread() {
+        MainActor.assertIsolated("DictationSequencer must only ever be touched from the main actor")
+        XCTAssertTrue(Thread.isMainThread, "the main actor's executor must be the main thread")
+
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        let ticket = seq.begin(raw: "main-actor-check")
+        seq.finish(ticket, outcome: passthrough("main-actor-check"))
+        XCTAssertEqual(env.inserted, ["main-actor-check"])
     }
 
     // MARK: - rewrite not attempted: exactly the pre-rewrite behaviour
@@ -335,6 +388,22 @@ final class DictationSequencerTests: XCTestCase {
         XCTAssertEqual(env.inserted, [])
         XCTAssertEqual(env.copied, ["my password is hunter2"])
         XCTAssertEqual(env.notices, [DictationNotice.secureInput])
+    }
+
+    /// Finding 2 of the Day 3 hardening pass (security-engineer): a `secure`
+    /// outcome whose reason was "couldn't check" (Accessibility off, or
+    /// revoked mid-session) must still never be pasted -- same as any other
+    /// secure outcome -- but must show a notice that says so, not the
+    /// "secure input is active" wording that claims a certainty this case
+    /// does not have.
+    func testCannotDetermineOutcomeShowsItsOwnNoticeNotSecureInput() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+        let ticket = seq.begin(raw: "my password is hunter2")
+        seq.finish(ticket, outcome: cannotDetermineSecure("my password is hunter2"))
+        XCTAssertEqual(env.inserted, [])
+        XCTAssertEqual(env.copied, ["my password is hunter2"])
+        XCTAssertEqual(env.notices, [DictationNotice.cannotDetermineSecureInput])
     }
 
     func testSecureOutcomeTakesPriorityOverTheStillRecordingNotice() {
@@ -700,5 +769,91 @@ final class DictationSequencerTests: XCTestCase {
         seq.finish(a, outcome: rewritten("A."))
         seq.flushPendingOnTerminate()
         XCTAssertEqual(env.copied, ["A."], "no second copy")
+    }
+
+    // MARK: - stress: rapid overlapping hotkey presses, not covered above by
+    // any single pairwise test
+
+    /// Simulates pressing the hotkey far faster than any real dictation could
+    /// ever complete: 25 dictations are all `begin()`un before any of them
+    /// `finish()`es, their rewrites land back in a shuffled (not FIFO) order,
+    /// the frontmost app and the recording flag are both churned on every
+    /// step (standing in for "switch app mid-recording, repeatedly"), and one
+    /// dictation is deliberately never finished at all (stands in for a
+    /// rewrite request that silently never calls back, as distinct from the
+    /// already-covered timeout-driven give-up path). The existing tests each
+    /// drive at most two or three tickets through one specific rule by hand;
+    /// none hammers the queue with this many in-flight tickets at once or
+    /// finishes them out of order at this scale. The invariant from
+    /// DictationSequencer's own doc comment must still hold: every dictation
+    /// is delivered (inserted XOR copied) exactly once, never lost, never
+    /// duplicated, and the ones that do get inserted keep their ticket order
+    /// relative to each other.
+    func testManyOverlappingDictationsAllOutOfOrderAreEachDeliveredExactlyOnce() {
+        let env = FakeEnvironment()
+        let seq = DictationSequencer(environment: env)
+
+        let count = 25
+        var tickets: [DictationSequencer.Ticket] = []
+        for i in 0..<count {
+            env.frontmost = Int32(i % 3) // churn "frontmost app" on every begin()
+            env.recording = (i % 2 == 0) // churn "still recording" too
+            let ticket = seq.begin(raw: "raw-\(i)")
+            tickets.append(ticket)
+            seq.willRewrite(ticket)
+        }
+        XCTAssertEqual(seq.pendingCount, count)
+
+        // Finish all but the last ticket, in a deliberately shuffled order
+        // (reversed, then every other one) rather than FIFO, and keep
+        // churning recording/frontmost state as each one lands.
+        let finishOrder = Array(stride(from: count - 2, through: 0, by: -1))
+        for i in finishOrder {
+            env.recording = (i % 3 == 0)
+            env.frontmost = Int32(i % 2)
+            seq.finish(tickets[i], outcome: rewritten("REWRITTEN-\(i)"))
+        }
+        // Ticket count-1 is left to never finish at all -- let its own
+        // give-up timer fire instead, same mechanism as the existing
+        // "never returns" test but now with 24 other tickets also mid-flight
+        // ahead of it in the queue rather than alone.
+        env.recording = false
+        env.advance(by: DictationSequencer.maxWait + 1)
+
+        // Drain any still-pending retry timers (deferral/notice-hold loops)
+        // until nothing is scheduled, so every ticket that CAN be delivered
+        // has been.
+        var guardIterations = 0
+        while env.scheduledCount > 0 && guardIterations < 1000 {
+            env.advance(by: max(DictationSequencer.minInsertGap, DictationSequencer.retryInterval))
+            guardIterations += 1
+        }
+        XCTAssertLessThan(guardIterations, 1000, "drain loop never settled -- possible livelock")
+
+        XCTAssertEqual(seq.pendingCount, 0, "every ticket must eventually be delivered, none left stuck")
+
+        // Every one of the 25 raw dictations must appear exactly once across
+        // both destinations, never in both, never in neither, never twice.
+        let delivered = env.inserted + env.copied
+        XCTAssertEqual(delivered.count, count, "each dictation must be delivered exactly once in total")
+        XCTAssertEqual(Set(delivered).count, delivered.count, "no dictation was delivered more than once")
+        for i in 0..<count {
+            let expectedRaw = "raw-\(i)"
+            let expectedRewritten = "REWRITTEN-\(i)"
+            let matches = delivered.filter { $0 == expectedRaw || $0 == expectedRewritten }
+            XCTAssertEqual(matches.count, 1, "ticket \(i) must be delivered exactly once; found \(matches.count)")
+        }
+
+        // Among whichever subset actually got pasted (as opposed to diverted
+        // to the clipboard by a focus change or a still-recording guard),
+        // ticket order must still be respected: DictationSequencer never
+        // inserts ticket N+1 before ticket N.
+        func ticketIndex(of delivered: String) -> Int? {
+            if delivered.hasPrefix("raw-") { return Int(delivered.dropFirst(4)) }
+            if delivered.hasPrefix("REWRITTEN-") { return Int(delivered.dropFirst(10)) }
+            return nil
+        }
+        let insertedIndices = env.inserted.compactMap(ticketIndex)
+        XCTAssertEqual(insertedIndices, insertedIndices.sorted(), "pasted dictations must stay in ticket order")
     }
 }

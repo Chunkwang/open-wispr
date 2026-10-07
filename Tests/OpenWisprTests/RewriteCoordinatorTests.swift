@@ -583,6 +583,19 @@ final class RewriteCoordinatorTests: XCTestCase {
         ))
     }
 
+    /// Finding 2 of the Day 3 hardening pass (security-engineer): Accessibility
+    /// being off (including revoked mid-session) must bail out exactly like a
+    /// confirmed secure field -- never paste, never send -- but is marked
+    /// `secureStatusUnknown` so `DictationSequencer` can show a notice that
+    /// says "couldn't check" rather than claiming secure input was confirmed.
+    func testSecureDictateOutcomeForCannotDetermineNeverAttemptsIsMarkedSecureAndUnknown() {
+        let outcome = RewriteCoordinator.secureDictateOutcome(for: .cannotDetermine, transcript: "my password is hunter2")
+        XCTAssertEqual(outcome, RewriteOutcome(
+            text: "my password is hunter2", notice: nil, rewritten: false, attempted: false, secure: true,
+            secureStatusUnknown: true
+        ))
+    }
+
     /// The bug this fixed: calling `process` first and only gating the paste on
     /// `secure` afterwards still sends the transcript to the network. Proving
     /// `secureDictateOutcome` is non-nil for every non-`.notSecure` status, and
@@ -592,7 +605,7 @@ final class RewriteCoordinatorTests: XCTestCase {
     /// `RewriteCoordinator` exists to intercept `process`, and adding one only
     /// to prove a `return` statement runs would not catch more than this does.)
     func testEveryNonNotSecureStatusProducesABailoutOutcome() {
-        for status: SecureInputCheck in [.secureField, .secureEventInput] {
+        for status: SecureInputCheck in [.secureField, .secureEventInput, .cannotDetermine] {
             XCTAssertNotNil(RewriteCoordinator.secureDictateOutcome(for: status, transcript: "x"))
         }
     }

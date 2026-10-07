@@ -20,6 +20,14 @@ struct RewriteOutcome: Equatable {
     /// the outcome as guarded regardless of `attempted`, so the same deferral and
     /// notice rules apply as to any other diverted insert.
     var secure: Bool = false
+    /// Set only alongside `secure` by the plain-dictation hotkey's bailout
+    /// (`secureDictateOutcome`, below), when the reason `secure` is true was
+    /// `SecureInputCheck.cannotDetermine` rather than a confirmed secure
+    /// field or secure keyboard input. `DictationSequencer.deliver` checks
+    /// this to choose a notice that says "couldn't check" rather than the
+    /// default "secure input is active" -- the two are not the same claim,
+    /// and only this one case needs the distinction.
+    var secureStatusUnknown: Bool = false
     /// Set only by `AskCoordinator`, when it captured a window-scoped
     /// screenshot to answer with: that window's on-screen frame, in AppKit/
     /// `NSScreen` coordinates (already converted from the Accessibility frame
@@ -239,6 +247,9 @@ final class RewriteCoordinator {
     /// send the transcript to the network from a secure field.
     static func secureDictateOutcome(for status: SecureInputCheck, transcript: String) -> RewriteOutcome? {
         guard status != .notSecure else { return nil }
-        return RewriteOutcome(text: transcript, notice: nil, rewritten: false, attempted: false, secure: true)
+        return RewriteOutcome(
+            text: transcript, notice: nil, rewritten: false, attempted: false, secure: true,
+            secureStatusUnknown: status == .cannotDetermine
+        )
     }
 }

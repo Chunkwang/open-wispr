@@ -33,6 +33,12 @@ private final class FakeReachability: NetworkReachability {
     func isOnline(waitingUpTo timeout: TimeInterval) async -> Bool { online }
 }
 
+// `@MainActor`: `testSecureFieldOutcomeNeverReachesInsertThroughTheRealSequencer`
+// and its sibling below drive a real `DictationSequencer`, which is
+// `@MainActor` now (Day 3 hardening pass). XCTest runs test methods on the
+// main thread, so this just makes that already-true fact visible to the
+// type checker.
+@MainActor
 final class EditCoordinatorTests: XCTestCase {
     private func makeCoordinator(
         snapshot: ContextSnapshot,
@@ -142,6 +148,7 @@ final class EditCoordinatorTests: XCTestCase {
     /// `DictationSequencer` here so this test proves the `secure: true` set on
     /// the two bailouts above actually stops the paste at that layer, not just
     /// that the flag is set and trusted to do so.
+    @MainActor
     private final class MinimalDictationEnvironment: DictationEnvironment {
         var inserted: [String] = []
         var copied: [String] = []

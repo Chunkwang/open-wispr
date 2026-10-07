@@ -47,4 +47,12 @@ enum DictationNotice {
     /// was never attempted: a synthetic paste into a secure field can silently
     /// fail or behave unpredictably, with no way to tell whether it worked.
     static let secureInput = "Secure input is active, so the dictation wasn't pasted. The text is on your clipboard."
+
+    /// Accessibility permission was off (including revoked mid-session) when
+    /// the plain-dictation hotkey checked whether the focused field was
+    /// secure, so that check could not run at all. Distinct from
+    /// `secureInput`, which means a secure field or secure keyboard input was
+    /// actually confirmed: this means the question could not be answered,
+    /// which is reason enough on its own to withhold the paste.
+    static let cannotDetermineSecureInput = "Murmur couldn't check if this field is safe, so the dictation wasn't pasted. The text is on your clipboard."
 }

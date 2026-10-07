@@ -176,10 +176,18 @@ final class AccessibilityContextReaderTests: XCTestCase {
         XCTAssertEqual(p.focusedElementCalls, 0, "secure keyboard input needs no Accessibility call at all")
     }
 
-    func testNotTrustedWithNoSecureEventInputIsNotSecure() {
+    /// Day 3 hardening pass, finding 2 (security-engineer): this used to
+    /// return `.notSecure`, which fails open -- if Accessibility is off, or
+    /// was revoked mid-session, there is no way to tell whether the focused
+    /// field is secure, and "we don't know" must not be treated the same as
+    /// "we checked and it isn't." `secureEventInput` is checked first and
+    /// unconditionally (needs no Accessibility trust at all, so a system
+    /// password prompt is still caught even here); everything past that
+    /// needs trust, and its absence now yields `.cannotDetermine`.
+    func testNotTrustedWithNoSecureEventInputCannotDetermine() {
         let p = provider()
         p.trusted = false
-        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .notSecure)
+        XCTAssertEqual(DefaultAccessibilityContextReader.captureSecureInputStatus(provider: p), .cannotDetermine)
     }
 
     func testSecureRoleIsReportedAsSecureField() {

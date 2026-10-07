@@ -11,8 +11,10 @@ enum DictationPhase: Equatable {
 }
 
 /// Everything the sequencer touches outside itself. `AppDelegate` supplies the
-/// real one; tests supply a fake with a manual clock. All calls happen on the main
-/// thread.
+/// real one; tests supply a fake with a manual clock. `@MainActor` makes the
+/// "main thread only" contract this doc comment used to merely assert into
+/// something the compiler enforces at every call site.
+@MainActor
 protocol DictationEnvironment: AnyObject {
     /// Monotonic seconds.
     func now() -> TimeInterval
@@ -69,6 +71,18 @@ protocol DictationEnvironment: AnyObject {
 /// A dictation that needed no waiting (rewrite not attempted, no earlier
 /// dictation pending) skips the deferral and focus checks entirely and is
 /// inserted at once, exactly as before rewrite existed.
+///
+/// `@MainActor`: every mutable property here (`nextID`, `ready`, `openTickets`,
+/// `lastTranscriptionOwner`, ...) used to be guarded only by a doc-comment
+/// convention that every call happens on the main thread, with nothing
+/// enforcing it. A stress test firing concurrent `begin()`/`finish()` calls
+/// from a background queue reproduced real memory corruption (unsynchronized
+/// `Dictionary` mutation). `@MainActor` turns that convention into a
+/// compile-time guarantee instead of a lock, which was the deliberate choice
+/// over adding an internal `NSLock`: a future caller mistake now fails to
+/// build instead of silently serializing (or, worse, not serializing) around
+/// a violation nobody notices.
+@MainActor
 final class DictationSequencer {
     struct Ticket: Equatable {
         let id: Int
@@ -212,7 +226,13 @@ final class DictationSequencer {
             // no point simulating a paste that likely won't work, and might
             // behave unpredictably, in a security-sensitive context.
             if !text.isEmpty { env.copyToPasteboard(text) }
-            notice = DictationNotice.secureInput
+            // `secureStatusUnknown` means Accessibility couldn't even be asked
+            // (see `SecureInputCheck.cannotDetermine`): "couldn't check" is a
+            // different claim from "checked, and it's secure," so it gets its
+            // own notice rather than the default below.
+            notice = entry.outcome.secureStatusUnknown
+                ? DictationNotice.cannotDetermineSecureInput
+                : DictationNotice.secureInput
             // `begin()` already set `lastTranscription` to this raw text before
             // the secure determination was known. Scrub it now so "Copy Last
             // Dictation" (StatusBarController) cannot re-expose a secure field's

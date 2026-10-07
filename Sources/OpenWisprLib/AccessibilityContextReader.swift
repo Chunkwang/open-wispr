@@ -59,6 +59,15 @@ enum SecureInputCheck: Equatable, Sendable {
     case notSecure
     case secureEventInput
     case secureField
+    /// Accessibility permission is off (or was revoked mid-session), so
+    /// whether the focused field is secure could not be determined at all.
+    /// Distinct from `.notSecure`: that means "checked, and it isn't";
+    /// this means "couldn't check". `RewriteCoordinator.secureDictateOutcome`
+    /// treats this the same as a confirmed secure field (clipboard only, no
+    /// paste, no network) because failing open here would silently paste --
+    /// or send to the network -- into a field that might be a password
+    /// field, with no way to tell.
+    case cannotDetermine
 }
 
 /// The few Accessibility and system calls the reader needs. Each call may block
@@ -308,7 +317,15 @@ final class DefaultAccessibilityContextReader: AccessibilityContextReader, @unch
     /// discipline: this only ever asks "is it secure", never "what does it say".
     static func captureSecureInputStatus(provider: AXProvider) -> SecureInputCheck {
         if provider.isSecureEventInputEnabled() { return .secureEventInput }
-        guard provider.isProcessTrusted() else { return .notSecure }
+        // Unlike `isSecureEventInputEnabled` above, everything past this point
+        // needs Accessibility trust to read the focused element at all. If
+        // that permission is off -- including revoked mid-session, after the
+        // user granted it once -- there is no way to tell whether the field
+        // is secure, which is a materially different answer from "checked and
+        // it is not": fail toward the safer outcome instead of toward
+        // `.notSecure`, which would let a synthetic paste proceed into a
+        // field this check could not actually examine.
+        guard provider.isProcessTrusted() else { return .cannotDetermine }
         guard let app = provider.frontmostApplication() else { return .notSecure }
         guard case .value(let element) = provider.focusedElement(pid: app.pid) else { return .notSecure }
         guard case .value(let role) = provider.string(.role, of: element) else { return .notSecure }
