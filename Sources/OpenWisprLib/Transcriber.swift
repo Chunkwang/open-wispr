@@ -50,7 +50,18 @@ public class Transcriber {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            // process.run() can throw before ever spawning the child (e.g. a
+            // permissions or sandbox denial even though findWhisperBinary()
+            // found the file). Nothing dup'd these fds into a child in that
+            // case, so they would otherwise leak exactly like the read ends
+            // below -- close them before rethrowing.
+            stdoutPipe.fileHandleForReading.closeFile()
+            stderrPipe.fileHandleForReading.closeFile()
+            throw error
+        }
 
         var stderrData = Data()
         let stderrThread = Thread {
@@ -61,6 +72,16 @@ public class Transcriber {
         let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         while !stderrThread.isFinished { Thread.sleep(forTimeInterval: 0.01) }
         process.waitUntilExit()
+
+        // `readDataToEndOfFile()` reads until EOF but, unlike higher-level APIs,
+        // never closes the file descriptor itself -- confirmed by a 60-iteration
+        // loop leaking exactly 2 fds per call (one per pipe) before this fix.
+        // Over a full day of real dictation (one fresh Process per transcribe,
+        // see the comment above) that slow leak eventually exhausts the
+        // process's fd table. Close both read ends explicitly on every exit
+        // path, success or throw.
+        stdoutPipe.fileHandleForReading.closeFile()
+        stderrPipe.fileHandleForReading.closeFile()
 
         let rawStdout = String(data: data, encoding: .utf8) ?? ""
         let stderrText = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

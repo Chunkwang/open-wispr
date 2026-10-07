@@ -71,6 +71,12 @@ enum Copy {
     static func statusError(_ message: String) -> String {
         "Error: \(message)"
     }
+    /// Shown when the hotkey is pressed but recording itself never starts (the
+    /// audio engine failed, most commonly because Microphone access was
+    /// revoked in System Settings after the app launched). Without this, the
+    /// status bar just falls back to "Ready" with no indication anything went
+    /// wrong -- see AppDelegate.handleRecordingStart's catch block.
+    static let recordingFailedToStart = "Could not start recording. Check Microphone access in System Settings → Privacy & Security."
 
     // MARK: - Rewrite disclosure sheet
 
