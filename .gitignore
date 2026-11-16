@@ -1,7 +1,10 @@
 .build/
+.build-scratch/
 .swiftpm/
 *.xcodeproj
 *.app
+*.dmg
+build.log
 .DS_Store
 .beads
 .claude/ralph-loop.local.md
@@ -12,3 +15,8 @@ docs/superpowers/
 
 # Ignore Node.js dependencies
 node_modules/
+
+# Local Worker secrets (wrangler dev); keep only the .example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example

@@ -11,43 +11,22 @@ enum OnboardingStep: Int, CaseIterable {
 
     var body: String {
         switch self {
-        case .welcome:
-            return "Hold the key, say what you want written. It stays on this Mac unless you tell it otherwise."
-        case .microphone:
-            return "We need microphone access to hear what you dictate. Audio is processed on this device and never saved or sent anywhere for the free tier."
-        case .accessibility:
-            return "Accessibility access lets the app place your dictated text wherever your cursor is. It doesn't let the app read anything you haven't dictated."
+        case .welcome: return Copy.onboardingWelcome
+        case .microphone: return Copy.onboardingMicrophone
+        case .accessibility: return Copy.onboardingAccessibility
         }
     }
 
     var buttonLabel: String {
         switch self {
-        case .welcome: return "Get Started"
-        case .microphone: return "Allow Microphone Access"
-        case .accessibility: return "Allow Accessibility Access"
+        case .welcome: return Copy.onboardingGetStarted
+        case .microphone: return Copy.onboardingAllowMic
+        case .accessibility: return Copy.onboardingAllowAX
         }
     }
 }
 
-struct BrandColor {
-    static let forestGreen = Color(hex: 0x1B4332)
-    static let emerald = Color(hex: 0x2D8659)
-    static let darkBackground = Color(hex: 0x0D1210)
-    static let lightBackground = Color(hex: 0xF7F9F7)
-    static let darkText = Color(hex: 0xE8EDE9)
-    static let lightText = Color(hex: 0x14201B)
-    static let sageGray = Color(hex: 0x8A9A92)
-}
-
-private extension Color {
-    init(hex: UInt32) {
-        self.init(
-            red: Double((hex >> 16) & 0xFF) / 255,
-            green: Double((hex >> 8) & 0xFF) / 255,
-            blue: Double(hex & 0xFF) / 255
-        )
-    }
-}
+// BrandColor and Color(hex:) are now in BrandColor.swift
 
 struct OnboardingView: View {
     let onFinish: () -> Void

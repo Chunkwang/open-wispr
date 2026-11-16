@@ -12,9 +12,25 @@ public class ModelDownloader: NSObject, URLSessionDownloadDelegate {
         let modelsDir = Config.configDir.appendingPathComponent("models")
         let destPath = modelsDir.appendingPathComponent(modelFileName)
 
-        if FileManager.default.fileExists(atPath: destPath.path) {
+        // A file existing at destPath is not proof the model is usable: a
+        // prior download could have been interrupted (e.g. the process
+        // killed) in the narrow window after moveItem placed the file but
+        // before the magic-byte check below ran, leaving a corrupt file
+        // behind with no download ever re-attempted. Transcriber.findModel
+        // / modelExists make the same "exists on disk" assumption this check
+        // does, so a corrupt file here would otherwise silently break
+        // dictation for this model size forever (confirmed: whisper-cli
+        // degrades gracefully with exit 0 and no stdout on a bad-magic model
+        // file rather than crashing, which `resolveOutput` already turns
+        // into a thrown transcriptionFailed -- but only ModelDownloader can
+        // actually fix the file, since nothing else ever re-downloads it).
+        if ModelDownloader.canReuseExisting(at: destPath.path) {
             print("Model '\(modelSize)' already exists at \(destPath.path)")
             return
+        }
+        if FileManager.default.fileExists(atPath: destPath.path) {
+            print("Existing model file for '\(modelSize)' is corrupt; re-downloading.")
+            try? FileManager.default.removeItem(at: destPath)
         }
 
         try FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
@@ -78,6 +94,22 @@ public class ModelDownloader: NSObject, URLSessionDownloadDelegate {
         } catch {
             completion?(error)
         }
+    }
+
+    // Pure decision logic split out of `download(modelSize:)` so the
+    // corrupt-leftover-file case can be unit tested without a real file or
+    // network call, the same way `Transcriber.resolveOutput` is split from
+    // its Process-touching caller. True only when a file exists at `path`
+    // AND it passes the GGML magic-byte check; false for both "missing" and
+    // "present but corrupt" so the caller's single "do I need to download?"
+    // branch stays simple.
+    static func canReuseExisting(
+        at path: String,
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        isValid: (URL) -> Bool = { ModelDownloader.isValidGGMLFile(at: $0) }
+    ) -> Bool {
+        guard fileExists(path) else { return false }
+        return isValid(URL(fileURLWithPath: path))
     }
 
     public static func isValidGGMLFile(at url: URL) -> Bool {

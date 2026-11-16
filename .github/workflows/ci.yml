@@ -26,6 +26,91 @@ jobs:
         if: steps.filter.outputs.swift == 'true'
         run: swift build -c release
 
+      # Task 5.1: Privacy Disclosure Sheet is now active in release builds, so
+      # RewriteConsent.recordAcceptance() and its disclosure text are SUPPOSED
+      # to be reachable here — do not add checks for those.
+      #
+      # What's still dev-only and must never leak into a release binary:
+      #   - the DEBUG-only test hook OPENWISPR_AGENT_LAYER (Config.swift).
+      #     recordTextAcceptance()/recordImageAcceptance() (v2 Edit/Ask consent)
+      #     are NOT checked here: Swift keeps those symbols regardless of the
+      #     `#if DEBUG` at the call site, so `nm`/`strings` can't see the gate.
+      #     That's enforced instead by the source-scan XCTests in
+      #     ContextConsentGateTests.swift, which run in the unit-tests job.
+      #
+      #   - the DEBUG-only On-Device AI (Foundation Models Phase 1) menu block in
+      #     StatusBarController.swift: its whole toggle + status line is inside
+      #     one `#if DEBUG`, so (unlike recordTextAcceptance/recordImageAcceptance
+      #     above) `strings` genuinely can see the gate here — a plain UI string
+      #     literal, unlike a method symbol, really is compiled out with the block.
+      #
+      # Add new DEBUG-only strings here as they're introduced — this list is
+      # exactly the kind of thing that silently stops covering a new feature
+      # if it isn't extended (that's how the previous gap happened).
+      - name: Verify release build succeeds
+        if: steps.filter.outputs.swift == 'true'
+        run: |
+          test -f .build/release/open-wispr
+
+      - name: DEBUG-only strings must not appear in the release binary
+        if: steps.filter.outputs.swift == 'true'
+        run: |
+          BIN=.build/release/open-wispr
+          FAIL=0
+          for needle in "OPENWISPR_AGENT_LAYER" "[DEBUG] On-Device AI"; do
+            if strings "$BIN" | grep -qF -- "$needle"; then
+              echo "FAIL: found '$needle' in release binary $BIN"
+              FAIL=1
+            else
+              echo "OK: '$needle' not present in release binary"
+            fi
+          done
+          exit $FAIL
+
+  worker-config-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The dev-only mock LLM must never be configured on the deployed Worker.
+      - name: LLM_PROVIDER is not set in wrangler.toml
+        run: |
+          if grep -n "LLM_PROVIDER" backend/proxy/wrangler.toml; then
+            echo "LLM_PROVIDER must not appear in wrangler.toml (dev-only mock switch)"
+            exit 1
+          fi
+
+  # Proxy tests run in real workerd (via @cloudflare/vitest-pool-workers) against
+  # mocked Supabase and Anthropic; no accounts or keys are involved.
+  backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: backend/proxy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/proxy/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Contract tests for the local mock auth server (node:test, no accounts or keys).
+      - name: Mock Supabase tests
+        run: npm run test:mock
+
   unit-tests:
     runs-on: macos-15
     steps:
@@ -69,5 +154,47 @@ jobs:
       - name: Build
         run: swift build -c release
 
+      # Task 5.4: fetch the model the app actually ships as its default
+      # (Config.defaultConfig.modelSize == "base.en" in Config.swift) before
+      # the offline-dictation test below runs. OfflineDictationTests skips
+      # itself (XCTSkip, exit 0) rather than failing when no model is found
+      # in any of Transcriber.findModel's standard locations — correct for a
+      # dev machine that hasn't downloaded one yet, but in CI that would mean
+      # this job reports green forever without ever exercising real
+      # transcription. This reuses the app's own `download-model` CLI
+      # command (Sources/OpenWispr/main.swift -> ModelDownloader.swift)
+      # instead of a hand-rolled curl, so it can't drift out of sync with
+      # wherever ModelDownloader actually writes the file
+      # (Config.configDir/models/ggml-<size>.bin, which is also one of the
+      # paths Transcriber.findModel searches).
+      - name: Download base.en model (app default; required for the offline test below)
+        run: .build/release/open-wispr download-model base.en
+
       - name: Transcription integration test
         run: bash scripts/test-transcription.sh
+
+      # Task 5.4: proves Transcriber.transcribe(audioURL:) -- the real
+      # production code path -- still produces a transcript with ALL
+      # network access denied via sandbox-exec. See
+      # scripts/test-offline-dictation.sh for the full adversarial proof (it
+      # also verifies the sandbox profile itself actually blocks a real
+      # network call, both outside and inside the sandbox, before trusting
+      # it for anything below). sandbox-exec and a full Xcode install (for
+      # the `xctest` CLI the script needs) both ship standard on the
+      # macos-15 runner image, so no extra install step is needed here.
+      #
+      # A "PASS (SKIPPED)" result means whisper-cli or the model wasn't
+      # found and the real transcription path was never exercised -- that
+      # is NOT an acceptable CI result for proving this claim, so it is
+      # treated as a failure here even though the script itself exits 0 for
+      # it (a skip is a legitimate, non-failing result for a local dev
+      # machine that may not have whisper-cpp/a model yet, which is why the
+      # script can't just hard-fail on skip itself).
+      - name: Offline dictation test (no network access)
+        run: |
+          set -o pipefail
+          bash scripts/test-offline-dictation.sh | tee /tmp/offline-dictation-ci-output.log
+          if grep -q "PASS (SKIPPED)" /tmp/offline-dictation-ci-output.log; then
+            echo "::error::OfflineDictationTests was SKIPPED in CI (whisper-cli or the base.en model was not found) -- this proves nothing about offline dictation and is not an acceptable CI result. Failing the build."
+            exit 1
+          fi

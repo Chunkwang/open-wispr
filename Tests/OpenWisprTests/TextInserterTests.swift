@@ -21,11 +21,17 @@ final class TextInserterTests: XCTestCase {
 
         XCTAssertEqual(events, [
             "clear",
-            "set:new transcription",
+            "writeItems",
             "paste:new transcription",
             "schedule",
         ])
         XCTAssertEqual(pasteboard.string(forType: .string), "new transcription")
+        
+        // Verify concealment markers (Task 5.5)
+        let types = pasteboard.pasteboardItems?.first?.types ?? []
+        XCTAssertTrue(types.contains(NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")))
+        XCTAssertTrue(types.contains(NSPasteboard.PasteboardType("com.apple.pasteboard.local-only")))
+
         guard let scheduledAction = scheduler.onlyScheduledAction() else { return }
         XCTAssertEqual(scheduledAction.delay, TextInserter.defaultRestoreDelay, accuracy: 0.001)
     }
@@ -62,10 +68,81 @@ final class TextInserterTests: XCTestCase {
         inserter.insert(text: "new transcription")
         pasteboard.clearContents()
         pasteboard.setString("newer clipboard", forType: .string)
+        let writeCountBeforeRestore = pasteboard.events.filter { $0 == "writeItems" || $0.hasPrefix("set:") }.count
         scheduler.runOnlyScheduledAction()
 
         XCTAssertEqual(pasteboard.string(forType: .string), "newer clipboard")
-        XCTAssertFalse(pasteboard.events.contains("writeItems"))
+        let writeCountAfterRestore = pasteboard.events.filter { $0 == "writeItems" || $0.hasPrefix("set:") }.count
+        XCTAssertEqual(writeCountBeforeRestore, writeCountAfterRestore, "Restore action should be skipped if pasteboard changed")
+    }
+
+    // The `token` parameter is for the local latency-timing log only (see
+    // DictationTiming.swift). It must never affect insertion behavior, and
+    // omitting it (the default) or passing nil/empty must not throw or crash.
+    func testInsertWithNilTokenBehavesLikeNoToken() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+        let scheduler = CapturingScheduler()
+        let inserter = makeInserter(pasteboard: pasteboard, scheduler: scheduler)
+
+        inserter.insert(text: "new transcription", token: nil)
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "new transcription")
+    }
+
+    func testInsertWithEmptyTokenDoesNotCrash() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+        let scheduler = CapturingScheduler()
+        let inserter = makeInserter(pasteboard: pasteboard, scheduler: scheduler)
+
+        inserter.insert(text: "new transcription", token: "")
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "new transcription")
+    }
+
+    func testInsertWithRealTokenDoesNotChangeInsertedText() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+        let scheduler = CapturingScheduler()
+        let inserter = makeInserter(pasteboard: pasteboard, scheduler: scheduler)
+
+        inserter.insert(text: "new transcription", token: DictationTiming.newToken())
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "new transcription")
+    }
+
+    func testInsertWithEmptyTextAndTokenDoesNotCrash() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+        let scheduler = CapturingScheduler()
+        let inserter = makeInserter(pasteboard: pasteboard, scheduler: scheduler)
+
+        inserter.insert(text: "", token: "abc123")
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "")
+    }
+
+    // AskOverlay's "Copy & Dismiss" routes through this (security review,
+    // Oct 2026): an Ask answer can be built from screen content, so it needs
+    // the same concealment/local-only protection as dictated text, with no
+    // save/restore of the prior clipboard (that's specific to the
+    // paste-then-restore dictation flow in `insert(text:)`).
+    func testWriteConcealedMarksItemConcealedAndLocalOnlyWithNoRestore() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+
+        TextInserter.writeConcealed("ask answer", to: pasteboard)
+
+        XCTAssertEqual(pasteboard.events, ["clear", "writeItems"])
+        XCTAssertEqual(pasteboard.string(forType: .string), "ask answer")
+
+        let types = pasteboard.pasteboardItems?.first?.types ?? []
+        XCTAssertTrue(types.contains(NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")))
+        XCTAssertTrue(types.contains(NSPasteboard.PasteboardType("com.apple.pasteboard.local-only")))
+    }
+
+    func testWriteConcealedWithEmptyTextDoesNotCrash() {
+        let pasteboard = FakePasteboard(string: "old clipboard")
+
+        TextInserter.writeConcealed("", to: pasteboard)
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "")
     }
 
     private func makeInserter(

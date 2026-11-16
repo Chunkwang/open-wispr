@@ -29,7 +29,7 @@ struct Permissions {
     static func resetAccessibility() {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
-        process.arguments = ["reset", "Accessibility", "com.goprimy.dictation-wip"]
+        process.arguments = ["reset", "Accessibility", ProductInfo.bundleIdentifier]
         try? process.run()
         process.waitUntilExit()
     }

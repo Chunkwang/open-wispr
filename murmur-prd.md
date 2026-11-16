@@ -6,6 +6,10 @@
 
 ---
 
+## Founder decision, 2026-09-25: screen awareness starts now
+
+The founder decided to start V2 before v1 has real paying users. **This waives the Section 13 gate for screen awareness only; it is a decision, not evidence.** V2 begins with **screen and context awareness** ("Stage C" in `murmur-implementation-plan.md`): voice-edit of selected text, then "ask about my screen", including an on-screen pointer that shows where to click. It never clicks, types or sends anything on the user's behalf. The **action-taking agent (Email, Calendar, confirmations) stays gated** by Section 13 and is built after screen awareness. Every V2 feature ships behind an **off-by-default switch**, needs its own consent record per data type, and must serve at least one of the four product bets at the top of the implementation plan. The safety rules in Section 8 (capture only on the user's explicit hotkey, never in the background; nothing irreversible without a raw-parameter confirmation) apply unchanged. Competitive facts were corrected the same day from the sources in `docs/competitive-teardown.md`.
+
 ## 0. What Changed, and Why
 
 The prior version of this PRD bundled three products' worth of risk into one v1: a proven dictation engine, an unproven rewrite layer, and an unvalidated, five-handler agent layer with real security exposure (most notably, unaddressed prompt-injection risk via captured screen content). The red team audit's core finding: the product's actual differentiated value — an agent safely acting on your behalf — was gated behind two paywalls that most trial users would never reach, while the riskiest and least-validated engineering (Terminal Handler safety, OAuth app review, five separate integrations) sat on the critical path before a single outside user had touched the product.
@@ -24,7 +28,7 @@ A free, local-first, open-source-forked voice dictation core — hold a key, spe
 
 **v1 problem:** Wispr Flow dictates and polishes text well, but requires an internet connection, processes centrally, and has a documented concern about reading keystrokes. There's no dictation tool that's genuinely local-first, open-source-auditable at its core, and still gets AI-polished output. That's the whole v1 gap, and it's real and sufficient on its own — it doesn't need the agent story to justify shipping.
 
-**v2 problem (unchanged from before, just sequenced later):** HeyClicky goes further than dictation — voice plus screen awareness plus an agent that executes tasks across your apps — but it's fully cloud-mediated, closed-source, with no privacy story, and a materially higher price ($100/month at its top tier). Once v1 has proven the trust story and the core loop with real users, extending it into a safely-scoped agent layer is the differentiated move nobody else in this category is making.
+**v2 problem (unchanged from before, just sequenced later):** HeyClicky goes further than dictation — voice plus screen awareness plus an agent that executes tasks across your apps — but it is cloud-processed (its own trust page: "everything is processed in the cloud"), and a materially higher price ($100/month at its top tier). *Corrected 2026-09-25:* it does publish a privacy page (raw screenshots are not stored after processing, the AI's analysis of each screenshot and the prompt are kept, no training on user data, no SOC 2 or ISO 27001 yet), and its original client is public under the MIT licence (github.com/farzaa/clicky) while current development is private. Sources: `docs/competitive-teardown.md`. Once v1 has proven the trust story and the core loop with real users, extending it into a safely-scoped agent layer is the differentiated move nobody else in this category is making.
 
 **Cost of not solving it (v1 framing):** users who want private, local dictation with real AI polish have no option that isn't a compromise — either cloud-dependent Wispr Flow, or a pure open-source tool like open-wispr with no rewrite layer at all.
 
@@ -58,7 +62,7 @@ A free, local-first, open-source-forked voice dictation core — hold a key, spe
 ## 6. Competitive Landscape
 
 - **Wispr Flow** — $15/month, dictation + AI rewrite, 100+ languages, real paying user base. This is now the **direct v1 competitor** — same core loop, we compete on trust architecture and price. Weaknesses: cloud-dependent, documented keystroke-reading concern, no action-taking capability at all.
-- **HeyClicky** — Mac-native, YC-backed, voice + screen awareness + agent task execution. Free / Pro $20/mo / Max $100/mo. This is the **v2 competitor**, not a v1 concern — we're not racing them on agent capability until v1 has proven itself. Their capital and head start on agent execution is real and worth tracking, but it doesn't change the sequencing decision above.
+- **HeyClicky** — Mac-native, described by third parties as Y Combinator-backed, voice + screen awareness + agent task execution + on-screen pointing. Free / Pro $20/mo / Max $100/mo. Since the 2026-09-25 decision to start screen awareness now, it is a **direct competitor for V2's first version**, not only for the later agent. It is not closed source at its origin: the original client is MIT-licensed and public, which means the feature idea itself has no moat. We compete on the four product bets (private by construction, verifiably trustworthy, reliable and light, priced for individuals). See `docs/competitive-teardown.md`.
 - **open-wispr** — MIT licensed, fully local dictation engine (whisper.cpp), ~99 languages, zero network requests, no rewrite layer. The trust-verified foundation for the dictation core.
 - **The v1 gap Murmur fills:** the only dictation-plus-rewrite product that is local-first and auditable at its core. **No durable moat yet** — open-wispr is MIT-licensed and forkable by anyone; the honest long-term differentiator is accumulated per-user value (rewrite presets, eventually Action Log history once v2 ships), which doesn't exist on day one and has to be built deliberately.
 
@@ -98,7 +102,7 @@ A free, local-first, open-source-forked voice dictation core — hold a key, spe
 
 ## 9. Platform & Distribution
 
-**v1: macOS only**, Sonoma 14.2+, Apple Silicon — matches open-wispr's base.
+**v1: macOS only**, macOS 13 (Ventura) or later, Apple Silicon — matches open-wispr's base. (Revised from Sonoma 14.2+ by the founder on 2026-09-24: nothing in v1 needs 14.2, and lowering a floor is free while raising one later strands users. The v2 agent's screenshot API needs macOS 14, so v2 must disable itself on macOS 13.)
 
 **Distribution cost:** Apple Developer Program notarization — **$99/year**, non-optional given how central trust is to the pitch.
 
@@ -162,6 +166,8 @@ A free, local-first, open-source-forked voice dictation core — hold a key, spe
 **A note the prior version missed:** dictation is naturally habitual (multiple times a day); any future agent usage would follow a much lower-frequency curve (plausibly weekly). These are two different retention curves. If v2 ever ships, its metrics need to be tracked and judged separately from dictation's — blending them into one retention number would hide whether either product is actually healthy.
 
 ## 13. Path to v2 — What Has to Be True Before the Agent Layer Gets Built
+
+*Update 2026-09-25: the founder waived this gate for **screen awareness** (see the decision at the top of this document). It still applies in full to the **action-taking agent** (Email, Calendar, Terminal): that work is not scheduled until these conditions are met or the founder waives them in writing.*
 
 This section didn't exist before, and it's the direct mechanism for the decision made in Section 0. The agent layer is not cancelled — it's gated. It gets greenlit when:
 

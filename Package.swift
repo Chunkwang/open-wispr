@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "open-wispr",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS("13.0")],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.4"),
     ],
